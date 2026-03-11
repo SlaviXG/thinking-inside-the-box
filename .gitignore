@@ -46,6 +46,13 @@ venv/
 coverage/
 .nyc_output/
 
+# Project data (downloaded separately - not committed)
+data/
+
+# Kuzu embedded database files
+*.db
+*.db.wal
+
 # Misc
 CLAUDE.md
 *.tmp

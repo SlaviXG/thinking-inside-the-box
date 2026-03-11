@@ -27,7 +27,7 @@ Each federation node (bank) runs:
 - A **frozen base model** (DeepSeek-R1 8B + QLoRA, ~6GB VRAM at 4-bit quantization)
 - **Trainable FLoRA adapters** - only these are transmitted to the central server
 - A **local RAG pipeline** querying private transaction logs
-- A **local graph database** holding a partition of the IBM AML dataset
+- A **local Kuzu graph database** holding a partition of the IBM AML dataset
 
 The **Central Aggregation Server** (Flower) aggregates encrypted adapter weight updates - never raw data or full model weights.
 
@@ -44,6 +44,34 @@ The **Central Aggregation Server** (Flower) aggregates encrypted adapter weight 
 | Graph Database | Kuzu (embedded, local per node) |
 | Dataset | IBM AML (Anti-Money Laundering) - synthetic, open-source |
 | Compute | Google Colab (Tesla T4, 16GB VRAM) |
+
+---
+
+## Project Structure
+
+```
+src/
+- config.py                   - central Config dataclass (all hyperparams and paths)
+- graph/
+  - base.py                   - GraphStore ABC (Strategy pattern interface)
+  - kuzu_store.py             - KuzuGraphStore - embedded DB, one .db file per node
+  - networkx_store.py         - NetworkXGraphStore - in-memory, for tests
+  - neo4j_store.py            - Neo4jGraphStore - stub for real deployment (Phase 4)
+  - factory.py                - GraphStoreFactory - creates backend from config
+- model/
+  - model_loader.py           - load_model(), load_tokenizer(), decode_output()
+- data/
+  - aml_ingestor.py           - AMLIngestor - partitions IBM AML CSV by bank ID
+- pipeline/
+  - prompt_builder.py         - pure function, builds LLM prompt from graph context
+  - investigation.py          - InvestigationPipeline (Facade)
+- federation/
+  - client.py                 - AMLFlowerClient - one instance per simulated bank
+  - server.py                 - start_server() - shared model, Flower simulation
+
+```
+
+The graph database layer uses the **Strategy pattern** - `GraphStore` is the abstract interface, with `KuzuGraphStore` as the default backend. The federation and RAG layers depend only on the interface, making the backend swappable without touching any other code.
 
 ---
 
