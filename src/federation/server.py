@@ -1,12 +1,10 @@
 from typing import Optional
-from functools import reduce
 
 import numpy as np
 import flwr as fl
 from flwr.common import (
     Parameters,
     FitRes,
-    EvaluateRes,
     parameters_to_ndarrays,
     ndarrays_to_parameters,
 )
@@ -51,7 +49,15 @@ class FLoRAStrategy(fl.server.strategy.FedAvg):
             parameters_to_ndarrays(fit_res.parameters)
             for _, fit_res in results
         ]
+
+        # Validate all clients returned the same number of parameter arrays
         n_params = len(all_params[0])
+        if not all(len(p) == n_params for p in all_params):
+            raise ValueError(
+                "Clients returned inconsistent parameter counts - "
+                "all clients must use identical LoRA configurations."
+            )
+
         n_lora = n_params // 2  # First half: A matrices. Second half: B matrices.
 
         # Stack A matrices vertically: each (r, in_features) -> (n*r, in_features)

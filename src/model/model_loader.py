@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
 
 from src.config import Config
 
@@ -26,11 +26,14 @@ def load_tokenizer(config: Config) -> AutoTokenizer:
     Load tokenizer with use_fast=config.use_fast_tokenizer.
     Default is False - required for DeepSeek-R1-Distill-Llama-8B to avoid
     Ġ/Ċ artefacts in decoded output.
+    pad_token is set to eos_token to support batch processing.
     """
-    return AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
         config.model_id,
         use_fast=config.use_fast_tokenizer,
     )
+    tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
 
 
 def load_model(config: Config) -> AutoModelForCausalLM:
@@ -50,9 +53,13 @@ def load_model(config: Config) -> AutoModelForCausalLM:
 def attach_lora(model: AutoModelForCausalLM, config: Config) -> AutoModelForCausalLM:
     """
     Attach trainable LoRA adapters to the frozen base model using PEFT.
-    Only the adapter weights (A and B matrices) will be updated during training.
-    The base model weights remain frozen throughout federation.
+    prepare_model_for_kbit_training() must be called before get_peft_model()
+    when using 4-bit quantization - without it gradients won't flow through
+    the frozen quantized layers to the adapters.
     """
+    if config.load_in_4bit:
+        model = prepare_model_for_kbit_training(model)
+
     lora_config = LoraConfig(
         r=config.lora_rank,
         lora_alpha=config.lora_alpha,
@@ -62,7 +69,7 @@ def attach_lora(model: AutoModelForCausalLM, config: Config) -> AutoModelForCaus
         task_type=TaskType.CAUSAL_LM,
     )
     model = get_peft_model(model, lora_config)
-    model.enable_input_require_grads()  # Required for gradient flow through frozen layers
+    model.enable_input_require_grads()
     model.print_trainable_parameters()
     return model
 

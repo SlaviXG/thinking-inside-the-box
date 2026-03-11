@@ -6,6 +6,7 @@ import flwr as fl
 
 from src.config import Config
 from src.data.aml_ingestor import AMLIngestor
+from src.graph.base import GraphStore
 from src.graph.factory import GraphStoreFactory
 from src.model.model_loader import decode_output
 from src.pipeline.investigation import InvestigationPipeline
@@ -46,6 +47,7 @@ class AMLFlowerClient(fl.client.NumPyClient):
         self._config = config
         self._model = model
         self._tokenizer = tokenizer
+        self._device = next(model.parameters()).device
 
         # Load partition and split into train/val/test
         ingestor = AMLIngestor(config)
@@ -53,15 +55,22 @@ class AMLFlowerClient(fl.client.NumPyClient):
         self._train_df, self._val_df, self._test_df = ingestor.split(df)
 
         # Ingest full partition (train+val+test) into graph for RAG retrieval
-        graph_store = GraphStoreFactory.create(config)
-        ingestor.run_from_df(graph_store, df)
+        # Store reference so we can close it cleanly on destruction
+        self._graph_store: GraphStore = GraphStoreFactory.create(config)
+        ingestor.run_from_df(self._graph_store, df)
 
-        self._pipeline = InvestigationPipeline(graph_store, model, tokenizer, config)
+        self._pipeline = InvestigationPipeline(
+            self._graph_store, model, tokenizer, config
+        )
 
         print(
             f"[Client bank_id={config.bank_id}] "
             f"train={len(self._train_df)} val={len(self._val_df)} test={len(self._test_df)} accounts"
         )
+
+    def __del__(self) -> None:
+        if hasattr(self, "_graph_store"):
+            self._graph_store.close()
 
     # --- Flower parameter interface ---
 
@@ -80,7 +89,6 @@ class AMLFlowerClient(fl.client.NumPyClient):
         """
         Load adapter weights received from the server.
         Expects the same ordering as get_parameters(): all A's then all B's.
-        Handles both original rank-r shapes and post-SVD decomposed shapes.
         """
         params = _lora_params(self._model)
         a_items = [(k, v) for k, v in params.items() if "lora_A" in k]
@@ -113,13 +121,13 @@ class AMLFlowerClient(fl.client.NumPyClient):
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
-        ).to("cuda")
+        ).to(self._device)
 
         target_ids = self._tokenizer(
             target_text + self._tokenizer.eos_token,
             return_tensors="pt",
             add_special_tokens=False,
-        ).input_ids.to("cuda")
+        ).input_ids.to(self._device)
 
         input_ids = torch.cat([prompt.input_ids, target_ids], dim=1)
         attention_mask = torch.cat([
@@ -146,7 +154,6 @@ class AMLFlowerClient(fl.client.NumPyClient):
             lr=self._config.learning_rate,
         )
 
-        # Sample accounts up to max_train_samples
         sample = self._train_df.sample(
             n=min(self._config.max_train_samples, len(self._train_df)),
             random_state=None,
@@ -174,7 +181,7 @@ class AMLFlowerClient(fl.client.NumPyClient):
                     optimizer.step()
                     total_loss += outputs.loss.item()
                     n_trained += 1
-                except Exception as e:
+                except (RuntimeError, ValueError, KeyError) as e:
                     print(f"  [fit] skipping {account_id}: {e}")
                     continue
 
@@ -197,7 +204,7 @@ class AMLFlowerClient(fl.client.NumPyClient):
 
         sample = self._test_df.sample(
             n=min(self._config.max_eval_samples, len(self._test_df)),
-            random_state=42,
+            random_state=None,  # consistent with fit() - no fixed seed
         )
 
         y_true, y_pred = [], []
@@ -207,7 +214,7 @@ class AMLFlowerClient(fl.client.NumPyClient):
             try:
                 response = self._pipeline.investigate(account_id)
                 pred_label = _parse_verdict(response)
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError) as e:
                 print(f"  [eval] skipping {account_id}: {e}")
                 pred_label = 0
             y_true.append(true_label)

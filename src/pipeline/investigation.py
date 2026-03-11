@@ -1,3 +1,4 @@
+import torch
 from src.config import Config
 from src.graph.base import GraphStore
 from src.model.model_loader import decode_output
@@ -24,6 +25,7 @@ class InvestigationPipeline:
         self._model = model
         self._tokenizer = tokenizer
         self._config = config
+        self._device = next(model.parameters()).device
 
     def investigate(self, account_id: str) -> str:
         """
@@ -46,16 +48,18 @@ class InvestigationPipeline:
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
-        ).to("cuda")
+        ).to(self._device)
 
-        # Step 4: generate (Reasoning)
-        outputs = self._model.generate(
-            **inputs,
-            max_new_tokens=self._config.max_new_tokens,
-            temperature=self._config.temperature,
-            do_sample=True,
-            pad_token_id=self._tokenizer.eos_token_id,
-        )
+        # Step 4: generate (Reasoning) - eval mode, no gradient tracking
+        self._model.eval()
+        with torch.no_grad():
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=self._config.max_new_tokens,
+                temperature=self._config.temperature,
+                do_sample=True,
+                pad_token_id=self._tokenizer.eos_token_id,
+            )
 
         # Step 5: decode
         return decode_output(self._tokenizer, outputs[0], inputs.input_ids.shape[1])
