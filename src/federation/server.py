@@ -1,20 +1,117 @@
+from typing import Optional
+from functools import reduce
+
+import numpy as np
 import flwr as fl
+from flwr.common import (
+    Parameters,
+    FitRes,
+    EvaluateRes,
+    parameters_to_ndarrays,
+    ndarrays_to_parameters,
+)
+from flwr.server.client_proxy import ClientProxy
 
 from src.config import Config
 from src.federation.client import AMLFlowerClient
-from src.model.model_loader import load_model, load_tokenizer
+from src.model.model_loader import load_model, load_tokenizer, attach_lora
+
+
+class FLoRAStrategy(fl.server.strategy.FedAvg):
+    """
+    FLoRA aggregation strategy.
+
+    Instead of averaging LoRA adapter matrices (which introduces mathematical noise),
+    this strategy stacks the A and B matrices from all clients and decomposes
+    the result back to rank r via SVD. This gives the exact weighted sum of
+    all adapter contributions with no approximation error.
+
+    Parameter ordering convention (must match AMLFlowerClient.get_parameters()):
+      parameters[:n_lora] = all lora_A matrices (shape: r x in_features each)
+      parameters[n_lora:] = all lora_B matrices (shape: out_features x r each)
+    """
+
+    def __init__(self, lora_rank: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._r = lora_rank
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: list[tuple[ClientProxy, FitRes]],
+        failures,
+    ) -> tuple[Optional[Parameters], dict]:
+        if not results:
+            return None, {}
+
+        print(f"\n[FLoRA] Round {server_round} - aggregating {len(results)} clients")
+
+        # Collect parameters from all clients
+        all_params = [
+            parameters_to_ndarrays(fit_res.parameters)
+            for _, fit_res in results
+        ]
+        n_params = len(all_params[0])
+        n_lora = n_params // 2  # First half: A matrices. Second half: B matrices.
+
+        # Stack A matrices vertically: each (r, in_features) -> (n*r, in_features)
+        stacked_A = [
+            np.concatenate([client[i] for client in all_params], axis=0)
+            for i in range(n_lora)
+        ]
+
+        # Stack B matrices horizontally: each (out_features, r) -> (out_features, n*r)
+        stacked_B = [
+            np.concatenate([client[i] for client in all_params], axis=1)
+            for i in range(n_lora, n_params)
+        ]
+
+        # SVD decompose each stacked pair back to rank r
+        new_A, new_B = [], []
+        for A_stack, B_stack in zip(stacked_A, stacked_B):
+            A_new, B_new = self._flora_decompose(B_stack, A_stack)
+            new_A.append(A_new)
+            new_B.append(B_new)
+
+        aggregated = new_A + new_B  # Preserve get_parameters() ordering
+        print(f"[FLoRA] Round {server_round} - aggregation complete")
+        return ndarrays_to_parameters(aggregated), {}
+
+    def _flora_decompose(
+        self, B_stack: np.ndarray, A_stack: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Given stacked adapter matrices:
+          B_stack: (out_features, n*r)
+          A_stack: (n*r, in_features)
+
+        Compute delta_W = B_stack @ A_stack  (exact sum of all client contributions)
+        then factorize back to rank r via SVD:
+          delta_W = U @ diag(S) @ Vt
+          B_new = U[:, :r] @ diag(sqrt(S[:r]))     shape: (out_features, r)
+          A_new = diag(sqrt(S[:r])) @ Vt[:r, :]    shape: (r, in_features)
+        """
+        delta_W = B_stack @ A_stack  # (out_features, in_features)
+        U, S, Vt = np.linalg.svd(delta_W, full_matrices=False)
+
+        r = self._r
+        S_sqrt = np.sqrt(np.maximum(S[:r], 0.0))  # clip for numerical stability
+
+        A_new = (np.diag(S_sqrt) @ Vt[:r, :]).astype(np.float32)
+        B_new = (U[:, :r] @ np.diag(S_sqrt)).astype(np.float32)
+        return A_new, B_new
 
 
 def build_client_fn(config_template: Config, model, tokenizer):
     """
     Returns a client_fn(cid: str) -> AMLFlowerClient closure.
-    cid is cast to int and used as config.bank_id so each simulated
-    client gets its own data partition and .db file.
+    Each client gets its own bank_id from cid, giving it a unique data partition
+    and its own Kuzu .db file.
     """
     def client_fn(cid: str) -> AMLFlowerClient:
         config = Config.from_dict({
             **config_template.__dict__,
-            "bank_id": int(cid),
+            "bank_id": int(cid) + 1,  # bank_id=0 means "all banks"; start from 1
         })
         return AMLFlowerClient(config, model, tokenizer)
 
@@ -23,13 +120,26 @@ def build_client_fn(config_template: Config, model, tokenizer):
 
 def start_server(config: Config) -> None:
     """
-    Launch Flower simulation via fl.simulation.start_simulation().
-    Model and tokenizer are loaded once here and shared across all
-    simulated clients via the client_fn closure - critical for T4 VRAM budget.
+    Launch the federated simulation via Flower's Virtual Client Engine.
+
+    Model and tokenizer are loaded ONCE here and shared across all simulated
+    clients via the client_fn closure - critical for T4 VRAM budget.
+    LoRA adapters are attached before simulation begins.
     """
-    print("Loading model and tokenizer (shared across all clients)...")
+    print("Loading base model and tokenizer (shared across all clients)...")
     model = load_model(config)
     tokenizer = load_tokenizer(config)
+    model = attach_lora(model, config)
+    print("Model ready.\n")
+
+    strategy = FLoRAStrategy(
+        lora_rank=config.lora_rank,
+        fraction_fit=1.0,
+        fraction_evaluate=1.0,
+        min_fit_clients=config.num_clients,
+        min_evaluate_clients=config.num_clients,
+        min_available_clients=config.num_clients,
+    )
 
     client_fn = build_client_fn(config, model, tokenizer)
 
@@ -37,6 +147,6 @@ def start_server(config: Config) -> None:
         client_fn=client_fn,
         num_clients=config.num_clients,
         config=fl.server.ServerConfig(num_rounds=config.num_rounds),
-        strategy=fl.server.strategy.FedAvg(),
-        # TODO Phase 3: replace FedAvg with FLoRA adapter aggregation strategy
+        strategy=strategy,
+        client_resources={"num_gpus": 1.0 / config.num_clients},
     )

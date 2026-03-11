@@ -59,15 +59,15 @@ src/
   - neo4j_store.py            - Neo4jGraphStore - stub for real deployment (Phase 4)
   - factory.py                - GraphStoreFactory - creates backend from config
 - model/
-  - model_loader.py           - load_model(), load_tokenizer(), decode_output()
+  - model_loader.py           - load_model(), load_tokenizer(), attach_lora(), decode_output()
 - data/
-  - aml_ingestor.py           - AMLIngestor - partitions IBM AML CSV by bank ID
+  - aml_ingestor.py           - AMLIngestor - partition by bank ID, 70/15/15 train/val/test split
 - pipeline/
   - prompt_builder.py         - pure function, builds LLM prompt from graph context
   - investigation.py          - InvestigationPipeline (Facade)
 - federation/
-  - client.py                 - AMLFlowerClient - one instance per simulated bank
-  - server.py                 - start_server() - shared model, Flower simulation
+  - client.py                 - AMLFlowerClient - local LoRA training + F1 evaluation per node
+  - server.py                 - FLoRAStrategy (stacking + SVD), start_server()
 
 ```
 
