@@ -41,7 +41,7 @@ The **Central Aggregation Server** (Flower) aggregates encrypted adapter weight 
 | Fine-tuning | QLoRA / FLoRA (Federated Low-Rank Adaptation) |
 | Federation Framework | Flower (flwr) |
 | Local Knowledge Retrieval | RAG (Retrieval-Augmented Generation) |
-| Graph Database | Neo4j (local per node) |
+| Graph Database | Kuzu (embedded, local per node) |
 | Dataset | IBM AML (Anti-Money Laundering) - synthetic, open-source |
 | Compute | Google Colab (Tesla T4, 16GB VRAM) |
 
