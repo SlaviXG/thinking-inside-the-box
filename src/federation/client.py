@@ -74,7 +74,7 @@ class AMLFlowerClient(fl.client.NumPyClient):
 
     # --- Flower parameter interface ---
 
-    def get_parameters(self, ins) -> list[np.ndarray]:
+    def get_parameters(self, config=None) -> list[np.ndarray]:
         """
         Return LoRA adapter weights as numpy arrays.
         Ordering: all lora_A matrices first (sorted by name), then all lora_B matrices.
@@ -189,7 +189,7 @@ class AMLFlowerClient(fl.client.NumPyClient):
         avg_loss = total_loss / max(n_trained, 1)
         print(f"  [fit] bank_id={self._config.bank_id} loss={avg_loss:.4f} samples={n_trained}")
 
-        return self.get_parameters(ins=None), n_trained, {"train_loss": avg_loss}
+        return self.get_parameters(), n_trained, {"train_loss": avg_loss}
 
     # --- Evaluation ---
 

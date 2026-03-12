@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 import flwr as fl
 from flwr.common import (
+    Context,
     Parameters,
     FitRes,
     parameters_to_ndarrays,
@@ -114,12 +115,13 @@ def build_client_fn(config_template: Config, model, tokenizer):
     Each client gets its own bank_id from cid, giving it a unique data partition
     and its own Kuzu .db file.
     """
-    def client_fn(cid: str) -> AMLFlowerClient:
+    def client_fn(context: Context) -> fl.client.Client:
+        cid = str(context.node_id)
         config = Config.from_dict({
             **config_template.__dict__,
             "bank_id": int(cid) + 1,  # bank_id=0 means "all banks"; start from 1
         })
-        return AMLFlowerClient(config, model, tokenizer)
+        return AMLFlowerClient(config, model, tokenizer).to_client()
 
     return client_fn
 
