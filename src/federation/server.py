@@ -124,19 +124,22 @@ def build_client_fn(config_template: Config, model, tokenizer):
     return client_fn
 
 
-def start_server(config: Config) -> None:
+def start_server(config: Config, model=None, tokenizer=None) -> None:
     """
     Launch the federated simulation via Flower's Virtual Client Engine.
 
-    Model and tokenizer are loaded ONCE here and shared across all simulated
-    clients via the client_fn closure - critical for T4 VRAM budget.
-    LoRA adapters are attached before simulation begins.
+    model and tokenizer can be passed in if already loaded (e.g. from a prior
+    Colab cell) to avoid reloading 6GB of weights and exhausting T4 VRAM.
+    If not provided, they are loaded and LoRA adapters attached here.
     """
-    print("Loading base model and tokenizer (shared across all clients)...")
-    model = load_model(config)
-    tokenizer = load_tokenizer(config)
-    model = attach_lora(model, config)
-    print("Model ready.\n")
+    if model is None or tokenizer is None:
+        print("Loading base model and tokenizer...")
+        model = load_model(config)
+        tokenizer = load_tokenizer(config)
+        model = attach_lora(model, config)
+        print("Model ready.\n")
+    else:
+        print("Reusing provided model and tokenizer.\n")
 
     strategy = FLoRAStrategy(
         lora_rank=config.lora_rank,
