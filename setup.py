@@ -10,7 +10,7 @@ setup(
         "peft>=0.10.0",
         "bitsandbytes>=0.43.0",
         "accelerate>=0.29.0",
-        "flwr>=1.8.0",
+        "flwr[simulation]>=1.8.0",
         "kuzu>=0.4.0",
         "networkx>=3.0",
         "pandas>=2.0.0",
