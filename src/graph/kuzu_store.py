@@ -5,6 +5,7 @@ from typing import Any
 import pandas as pd
 import kuzu
 
+from src.config import Config
 from src.graph.base import GraphStore
 
 
@@ -14,8 +15,8 @@ class KuzuGraphStore(GraphStore):
     One .db file per simulated bank node - maps directly to the federation architecture.
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
+    def __init__(self, config: Config) -> None:
+        self._db_path = os.path.join(config.db_base_dir, f"bank_{config.bank_id}.db")
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
 

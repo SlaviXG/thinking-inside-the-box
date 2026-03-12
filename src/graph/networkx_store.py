@@ -2,6 +2,7 @@ from typing import Any
 
 import networkx as nx
 
+from src.config import Config
 from src.graph.base import GraphStore
 
 
@@ -13,7 +14,7 @@ class NetworkXGraphStore(GraphStore):
     so that prompt-level tests are backend-agnostic.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, config: Config) -> None:
         self._graph: nx.DiGraph | None = None
 
     def connect(self) -> None:

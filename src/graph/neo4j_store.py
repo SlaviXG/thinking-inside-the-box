@@ -1,5 +1,6 @@
 from typing import Any
 
+from src.config import Config
 from src.graph.base import GraphStore
 
 _NOT_IMPLEMENTED_MSG = (
@@ -15,10 +16,10 @@ class Neo4jGraphStore(GraphStore):
     All methods raise NotImplementedError until implemented.
     """
 
-    def __init__(self, uri: str, user: str, password: str) -> None:
-        self._uri = uri
-        self._user = user
-        self._password = password
+    def __init__(self, config: Config) -> None:
+        self._uri = config.neo4j_uri
+        self._user = config.neo4j_user
+        self._password = config.neo4j_password
 
     def connect(self) -> None:
         raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
