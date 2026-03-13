@@ -116,10 +116,10 @@ def build_client_fn(config_template: Config, model, tokenizer):
     and its own Kuzu .db file.
     """
     def client_fn(context: Context) -> fl.client.Client:
-        cid = str(context.node_id)
+        partition_id = int(context.node_config["partition-id"])
         config = Config.from_dict({
             **config_template.__dict__,
-            "bank_id": int(cid) + 1,  # bank_id=0 means "all banks"; start from 1
+            "bank_id": partition_id + 1,  # bank_id=0 means "all banks"; start from 1
         })
         return AMLFlowerClient(config, model, tokenizer).to_client()
 
