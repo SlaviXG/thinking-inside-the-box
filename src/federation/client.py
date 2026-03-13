@@ -2,8 +2,6 @@ import numpy as np
 import torch
 from torch.optim import AdamW
 from sklearn.metrics import f1_score, precision_score, recall_score
-import flwr as fl
-
 from src.config import Config
 from src.data.aml_ingestor import AMLIngestor
 from src.graph.base import GraphStore
@@ -31,7 +29,7 @@ def _lora_params(model) -> dict:
     ))
 
 
-class AMLFlowerClient(fl.client.NumPyClient):
+class AMLFlowerClient:
     """
     Flower client representing one bank node in the federation.
 
