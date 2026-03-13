@@ -1,7 +1,7 @@
 import numpy as np
 
 from src.config import Config
-from src.federation.client import AMLFlowerClient
+from src.federation.client import AMLFederatedClient
 from src.model.model_loader import load_model, load_tokenizer, attach_lora
 
 
@@ -14,7 +14,7 @@ class FLoRAStrategy:
     the result back to rank r via SVD. This gives the exact weighted sum of
     all adapter contributions with no approximation error.
 
-    Parameter ordering convention (must match AMLFlowerClient.get_parameters()):
+    Parameter ordering convention (must match AMLFederatedClient.get_parameters()):
       parameters[:n_lora] = all lora_A matrices (shape: r x in_features each)
       parameters[n_lora:] = all lora_B matrices (shape: out_features x r each)
     """
@@ -116,7 +116,7 @@ def start_server(config: Config, model=None, tokenizer=None) -> None:
             **config.__dict__,
             "bank_id": cid + 1,  # bank_id=0 means "all banks"; start from 1
         })
-        clients.append(AMLFlowerClient(client_config, model, tokenizer))
+        clients.append(AMLFederatedClient(client_config, model, tokenizer))
 
     strategy = FLoRAStrategy(lora_rank=config.lora_rank)
     global_params = clients[0].get_parameters()

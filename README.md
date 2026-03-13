@@ -66,7 +66,7 @@ src/
   - prompt_builder.py         - pure function, builds LLM prompt from graph context
   - investigation.py          - InvestigationPipeline (Facade)
 - federation/
-  - client.py                 - AMLFlowerClient - local LoRA training + F1 evaluation per node
+  - client.py                 - AMLFederatedClient - local LoRA training + F1 evaluation per node
   - server.py                 - FLoRAStrategy (stacking + SVD aggregation), start_server()
 
 ```

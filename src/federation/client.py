@@ -29,7 +29,7 @@ def _lora_params(model) -> dict:
     ))
 
 
-class AMLFlowerClient:
+class AMLFederatedClient:
     """
     Flower client representing one bank node in the federation.
 
