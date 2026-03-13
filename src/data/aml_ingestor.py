@@ -50,11 +50,15 @@ class AMLIngestor:
         train_ratio = self._config.train_ratio
         val_ratio = self._config.val_ratio
 
+        # Fall back to non-stratified split if any class has fewer than 2 members
+        def _stratify_or_none(df):
+            return df["label"] if df["label"].value_counts().min() >= 2 else None
+
         # First split: train vs (val + test)
         train_df, temp_df = train_test_split(
             account_labels,
             train_size=train_ratio,
-            stratify=account_labels["label"],
+            stratify=_stratify_or_none(account_labels),
             random_state=42,
         )
 
@@ -63,7 +67,7 @@ class AMLIngestor:
         val_df, test_df = train_test_split(
             temp_df,
             train_size=relative_val,
-            stratify=temp_df["label"],
+            stratify=_stratify_or_none(temp_df),
             random_state=42,
         )
 
