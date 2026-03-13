@@ -1,22 +1,11 @@
-from typing import Optional
-
 import numpy as np
-import flwr as fl
-from flwr.common import (
-    Context,
-    Parameters,
-    FitRes,
-    parameters_to_ndarrays,
-    ndarrays_to_parameters,
-)
-from flwr.server.client_proxy import ClientProxy
 
 from src.config import Config
 from src.federation.client import AMLFlowerClient
 from src.model.model_loader import load_model, load_tokenizer, attach_lora
 
 
-class FLoRAStrategy(fl.server.strategy.FedAvg):
+class FLoRAStrategy:
     """
     FLoRA aggregation strategy.
 
@@ -30,28 +19,20 @@ class FLoRAStrategy(fl.server.strategy.FedAvg):
       parameters[n_lora:] = all lora_B matrices (shape: out_features x r each)
     """
 
-    def __init__(self, lora_rank: int, **kwargs) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, lora_rank: int) -> None:
         self._r = lora_rank
 
-    def aggregate_fit(
+    def aggregate(
         self,
         server_round: int,
-        results: list[tuple[ClientProxy, FitRes]],
-        failures,
-    ) -> tuple[Optional[Parameters], dict]:
-        if not results:
-            return None, {}
+        all_params: list[list[np.ndarray]],
+    ) -> list[np.ndarray]:
+        """
+        Aggregate LoRA parameters from all clients using FLoRA stacking + SVD.
+        all_params: one list of np.ndarray per client, ordered A's then B's.
+        """
+        print(f"\n[FLoRA] Round {server_round} - aggregating {len(all_params)} clients")
 
-        print(f"\n[FLoRA] Round {server_round} - aggregating {len(results)} clients")
-
-        # Collect parameters from all clients
-        all_params = [
-            parameters_to_ndarrays(fit_res.parameters)
-            for _, fit_res in results
-        ]
-
-        # Validate all clients returned the same number of parameter arrays
         n_params = len(all_params[0])
         if not all(len(p) == n_params for p in all_params):
             raise ValueError(
@@ -73,16 +54,14 @@ class FLoRAStrategy(fl.server.strategy.FedAvg):
             for i in range(n_lora, n_params)
         ]
 
-        # SVD decompose each stacked pair back to rank r
         new_A, new_B = [], []
         for A_stack, B_stack in zip(stacked_A, stacked_B):
             A_new, B_new = self._flora_decompose(B_stack, A_stack)
             new_A.append(A_new)
             new_B.append(B_new)
 
-        aggregated = new_A + new_B  # Preserve get_parameters() ordering
         print(f"[FLoRA] Round {server_round} - aggregation complete")
-        return ndarrays_to_parameters(aggregated), {}
+        return new_A + new_B  # Preserve get_parameters() ordering
 
     def _flora_decompose(
         self, B_stack: np.ndarray, A_stack: np.ndarray
@@ -109,30 +88,17 @@ class FLoRAStrategy(fl.server.strategy.FedAvg):
         return A_new, B_new
 
 
-def build_client_fn(config_template: Config, model, tokenizer):
-    """
-    Returns a client_fn(cid: str) -> AMLFlowerClient closure.
-    Each client gets its own bank_id from cid, giving it a unique data partition
-    and its own Kuzu .db file.
-    """
-    def client_fn(context: Context) -> fl.client.Client:
-        partition_id = int(context.node_config["partition-id"])
-        config = Config.from_dict({
-            **config_template.__dict__,
-            "bank_id": partition_id + 1,  # bank_id=0 means "all banks"; start from 1
-        })
-        return AMLFlowerClient(config, model, tokenizer).to_client()
-
-    return client_fn
-
-
 def start_server(config: Config, model=None, tokenizer=None) -> None:
     """
-    Launch the federated simulation via Flower's Virtual Client Engine.
+    In-process federated simulation - all clients share one model instance.
 
-    model and tokenizer can be passed in if already loaded (e.g. from a prior
-    Colab cell) to avoid reloading 6GB of weights and exhausting T4 VRAM.
-    If not provided, they are loaded and LoRA adapters attached here.
+    Flower's Virtual Client Engine uses Ray (separate processes), which copies
+    the model into each worker via pickle, causing OOM even on A100. This manual
+    loop runs all clients sequentially in the main process so the model is
+    loaded exactly once and shared by reference.
+
+    model and tokenizer can be passed in if already loaded in the session to
+    avoid reloading weights into VRAM.
     """
     if model is None or tokenizer is None:
         print("Loading base model and tokenizer...")
@@ -143,21 +109,36 @@ def start_server(config: Config, model=None, tokenizer=None) -> None:
     else:
         print("Reusing provided model and tokenizer.\n")
 
-    strategy = FLoRAStrategy(
-        lora_rank=config.lora_rank,
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_fit_clients=config.num_clients,
-        min_evaluate_clients=config.num_clients,
-        min_available_clients=config.num_clients,
-    )
+    # Instantiate all clients in the main process - all share the same model
+    clients = []
+    for cid in range(config.num_clients):
+        client_config = Config.from_dict({
+            **config.__dict__,
+            "bank_id": cid + 1,  # bank_id=0 means "all banks"; start from 1
+        })
+        clients.append(AMLFlowerClient(client_config, model, tokenizer))
 
-    client_fn = build_client_fn(config, model, tokenizer)
+    strategy = FLoRAStrategy(lora_rank=config.lora_rank)
+    global_params = clients[0].get_parameters()
 
-    fl.simulation.start_simulation(
-        client_fn=client_fn,
-        num_clients=config.num_clients,
-        config=fl.server.ServerConfig(num_rounds=config.num_rounds),
-        strategy=strategy,
-        client_resources={"num_gpus": 1.0 / config.num_clients},
-    )
+    for round_num in range(1, config.num_rounds + 1):
+        print(f"\n{'='*50}")
+        print(f"Round {round_num}/{config.num_rounds}")
+        print(f"{'='*50}")
+
+        # Fit phase - sequential to keep one model in VRAM
+        all_params = []
+        for client in clients:
+            params, n_samples, metrics = client.fit(
+                global_params, {"local_epochs": config.local_epochs}
+            )
+            all_params.append(params)
+
+        # Aggregate with FLoRA
+        global_params = strategy.aggregate(round_num, all_params)
+
+        # Evaluate phase
+        for client in clients:
+            client.evaluate(global_params, {})
+
+    print("\nFederated simulation complete.")
