@@ -29,7 +29,7 @@ Each federation node (bank) runs:
 - A **local RAG pipeline** querying private transaction logs
 - A **local Kuzu graph database** holding a partition of the IBM AML dataset
 
-The **Central Aggregation Server** (Flower) aggregates encrypted adapter weight updates - never raw data or full model weights.
+The **Central Aggregation Server** aggregates adapter weight updates using FLoRA (stacking + SVD) - never raw data or full model weights.
 
 ---
 
@@ -39,11 +39,11 @@ The **Central Aggregation Server** (Flower) aggregates encrypted adapter weight 
 |---|---|
 | Base Model | DeepSeek-R1-Distill-8B |
 | Fine-tuning | QLoRA / FLoRA (Federated Low-Rank Adaptation) |
-| Federation Framework | Flower (flwr) |
+| Federation | In-process simulation loop with FLoRAStrategy aggregation |
 | Local Knowledge Retrieval | RAG (Retrieval-Augmented Generation) |
 | Graph Database | Kuzu (embedded, local per node) |
 | Dataset | IBM AML (Anti-Money Laundering) - synthetic, open-source |
-| Compute | Google Colab (Tesla T4, 16GB VRAM) |
+| Compute | Google Colab (A100, 40GB VRAM) |
 
 ---
 
@@ -67,7 +67,7 @@ src/
   - investigation.py          - InvestigationPipeline (Facade)
 - federation/
   - client.py                 - AMLFlowerClient - local LoRA training + F1 evaluation per node
-  - server.py                 - FLoRAStrategy (stacking + SVD), start_server()
+  - server.py                 - FLoRAStrategy (stacking + SVD aggregation), start_server()
 
 ```
 
@@ -77,7 +77,7 @@ The graph database layer uses the **Strategy pattern** - `GraphStore` is the abs
 
 ## Objectives
 
-1. **Federated Simulation** - Simulate a cross-silo network of banking institutions using Flower, with realistic non-IID data distributions across nodes
+1. **Federated Simulation** - Simulate a cross-silo network of banking institutions with realistic non-IID data distributions across nodes
 2. **Local RAG** - Enable each node to query its private transaction graph for reasoning, without exposing data externally
 3. **Trilemma Evaluation** - Benchmark against baselines across:
    - **Utility** - F1-Score on AML detection
