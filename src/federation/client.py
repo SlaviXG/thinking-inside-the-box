@@ -1,7 +1,8 @@
 import numpy as np
 import torch
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from torch.optim import AdamW
-from sklearn.metrics import f1_score, precision_score, recall_score
+
 from src.config import Config
 from src.data.aml_ingestor import AMLIngestor
 from src.graph.base import GraphStore
@@ -139,6 +140,20 @@ class AMLFederatedClient:
 
         return input_ids, attention_mask, labels
 
+    def _compute_loss(self, account_id: str, label: int) -> float | None:
+        """Compute cross-entropy loss for one account without updating weights."""
+        try:
+            input_ids, attention_mask, labels = self._build_training_example(account_id, label)
+            with torch.no_grad():
+                outputs = self._model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                )
+            return outputs.loss.item()
+        except (RuntimeError, ValueError, KeyError):
+            return None
+
     def fit(self, parameters, config) -> tuple[list[np.ndarray], int, dict]:
         """
         Local training round on the train split.
@@ -195,15 +210,22 @@ class AMLFederatedClient:
         """
         Evaluate on the test split.
         Parses LLM verdicts and computes F1 against ground truth Is Laundering labels.
+        Uses the full test split when max_eval_samples == 0, otherwise samples.
         Returns (loss=1-F1, num_examples, metrics).
         """
         self.set_parameters(parameters)
         self._model.eval()
 
-        sample = self._test_df.sample(
-            n=min(self._config.max_eval_samples, len(self._test_df)),
-            random_state=None,  # consistent with fit() - no fixed seed
-        )
+        if (
+            self._config.max_eval_samples == 0
+            or self._config.max_eval_samples >= len(self._test_df)
+        ):
+            sample = self._test_df
+        else:
+            sample = self._test_df.sample(
+                n=self._config.max_eval_samples,
+                random_state=None,
+            )
 
         y_true, y_pred = [], []
         for _, row in sample.iterrows():
@@ -235,3 +257,52 @@ class AMLFederatedClient:
             "precision": precision,
             "recall": recall,
         }
+
+    # --- Privacy: Membership Inference Attack ---
+
+    def mia_score(self, n_members: int, n_nonmembers: int) -> float:
+        """
+        Loss-based Membership Inference Attack (Yeom et al., 2018).
+
+        Computes per-sample cross-entropy loss on training accounts (members)
+        and test accounts (non-members) using the current adapter weights.
+        Fits a threshold classifier on those losses and returns AUC.
+
+        AUC interpretation:
+          0.5 = random chance = adapter deltas carry no membership signal (privacy holds)
+          1.0 = perfect membership prediction = full leakage
+
+        The adversary model: an attacker who intercepts adapter weight updates
+        on the wire runs inference on candidate accounts and uses loss as a
+        membership score. This is the weakest realistic attack - if it fails,
+        stronger attacks are unlikely to succeed.
+        """
+        self._model.eval()
+
+        member_sample = self._train_df.sample(
+            n=min(n_members, len(self._train_df)), random_state=42
+        )
+        nonmember_sample = self._test_df.sample(
+            n=min(n_nonmembers, len(self._test_df)), random_state=42
+        )
+
+        losses, labels = [], []
+
+        for _, row in member_sample.iterrows():
+            loss = self._compute_loss(str(row["account_id"]), int(row["label"]))
+            if loss is not None:
+                losses.append(loss)
+                labels.append(1)
+
+        for _, row in nonmember_sample.iterrows():
+            loss = self._compute_loss(str(row["account_id"]), int(row["label"]))
+            if loss is not None:
+                losses.append(loss)
+                labels.append(0)
+
+        if len(set(labels)) < 2:
+            return 0.5  # cannot compute AUC without both classes present
+
+        # Lower loss -> more likely a member; negate so higher score = more likely member
+        neg_losses = [-l for l in losses]
+        return float(roc_auc_score(labels, neg_losses))

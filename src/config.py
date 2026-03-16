@@ -42,7 +42,11 @@ class Config:
     local_epochs: int = 1
     learning_rate: float = 2e-4
     max_train_samples: int = 100   # Accounts sampled per fit() round (GPU budget)
-    max_eval_samples: int = 50     # Accounts sampled per evaluate() round
+    max_eval_samples: int = 0      # Accounts sampled per evaluate(); 0 = full test split
+
+    # Membership Inference Attack
+    mia_n_members: int = 50        # Training accounts sampled for MIA (members)
+    mia_n_nonmembers: int = 50     # Test accounts sampled for MIA (non-members)
 
     def __post_init__(self) -> None:
         if not (0 < self.train_ratio < 1):

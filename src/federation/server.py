@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 
 from src.config import Config
@@ -88,7 +90,7 @@ class FLoRAStrategy:
         return A_new, B_new
 
 
-def start_server(config: Config, model=None, tokenizer=None) -> None:
+def start_server(config: Config, model=None, tokenizer=None) -> dict:
     """
     In-process federated simulation - all clients share one model instance.
 
@@ -99,6 +101,14 @@ def start_server(config: Config, model=None, tokenizer=None) -> None:
 
     model and tokenizer can be passed in if already loaded in the session to
     avoid reloading weights into VRAM.
+
+    Returns a history dict with per-round metrics for all three Trilemma axes:
+      - train_loss:              list[list[float]]  - per round, per client
+      - f1 / precision / recall: list[list[float]]  - per round, per client
+      - round_latency_s:         list[float]        - wall-clock seconds per round
+      - comm_bytes_flora:        list[list[int]]    - adapter delta bytes per round per client
+      - comm_bytes_fedavg_per_round: int            - theoretical FedAvg cost (constant)
+      - mia_auc:                 list[list[float]]  - MIA AUC per round per client
     """
     if model is None or tokenizer is None:
         print("Loading base model and tokenizer...")
@@ -108,6 +118,11 @@ def start_server(config: Config, model=None, tokenizer=None) -> None:
         print("Model ready.\n")
     else:
         print("Reusing provided model and tokenizer.\n")
+
+    # Theoretical FedAvg communication cost: full model weights per client per round.
+    # Each bank would need to upload and receive a full copy of the 8B model.
+    full_model_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+    fedavg_bytes_per_round = full_model_bytes * config.num_clients
 
     # Instantiate all clients in the main process - all share the same model
     clients = []
@@ -121,24 +136,61 @@ def start_server(config: Config, model=None, tokenizer=None) -> None:
     strategy = FLoRAStrategy(lora_rank=config.lora_rank)
     global_params = clients[0].get_parameters()
 
+    history = {
+        "train_loss": [],               # list[list[float]]
+        "f1": [],                       # list[list[float]]
+        "precision": [],                # list[list[float]]
+        "recall": [],                   # list[list[float]]
+        "round_latency_s": [],          # list[float]
+        "comm_bytes_flora": [],         # list[list[int]]
+        "comm_bytes_fedavg_per_round": fedavg_bytes_per_round,  # int (constant)
+        "mia_auc": [],                  # list[list[float]]
+    }
+
     for round_num in range(1, config.num_rounds + 1):
         print(f"\n{'='*50}")
         print(f"Round {round_num}/{config.num_rounds}")
         print(f"{'='*50}")
 
+        round_start = time.time()
+
         # Fit phase - sequential to keep one model in VRAM
-        all_params = []
+        all_params, round_losses, round_comm_bytes = [], [], []
         for client in clients:
             params, n_samples, metrics = client.fit(
                 global_params, {"local_epochs": config.local_epochs}
             )
             all_params.append(params)
+            round_losses.append(metrics["train_loss"])
+            round_comm_bytes.append(sum(arr.nbytes for arr in params))
 
         # Aggregate with FLoRA
         global_params = strategy.aggregate(round_num, all_params)
 
+        round_elapsed = time.time() - round_start
+        history["train_loss"].append(round_losses)
+        history["comm_bytes_flora"].append(round_comm_bytes)
+        history["round_latency_s"].append(round_elapsed)
+
         # Evaluate phase
+        round_f1, round_precision, round_recall = [], [], []
         for client in clients:
-            client.evaluate(global_params, {})
+            _, _, eval_metrics = client.evaluate(global_params, {})
+            round_f1.append(eval_metrics["f1"])
+            round_precision.append(eval_metrics["precision"])
+            round_recall.append(eval_metrics["recall"])
+        history["f1"].append(round_f1)
+        history["precision"].append(round_precision)
+        history["recall"].append(round_recall)
+
+        # MIA per client - measures membership signal in transmitted adapter deltas
+        print(f"\n[MIA] Round {round_num}")
+        round_mia = []
+        for client in clients:
+            auc = client.mia_score(config.mia_n_members, config.mia_n_nonmembers)
+            print(f"  [mia] bank_id={client._config.bank_id} AUC={auc:.3f}")
+            round_mia.append(auc)
+        history["mia_auc"].append(round_mia)
 
     print("\nFederated simulation complete.")
+    return history
