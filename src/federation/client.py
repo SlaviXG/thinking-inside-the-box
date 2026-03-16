@@ -7,7 +7,6 @@ from src.config import Config
 from src.data.aml_ingestor import AMLIngestor
 from src.graph.base import GraphStore
 from src.graph.factory import GraphStoreFactory
-from src.model.model_loader import decode_output
 from src.pipeline.investigation import InvestigationPipeline
 from src.pipeline.prompt_builder import build_investigation_prompt
 
