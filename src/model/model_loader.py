@@ -61,7 +61,9 @@ def attach_lora(model: AutoModelForCausalLM, config: Config) -> AutoModelForCaus
     if config.load_in_4bit:
         model = prepare_model_for_kbit_training(
             model,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            gradient_checkpointing_kwargs={"use_reentrant": True},
+            # use_reentrant=True is required - bitsandbytes 4-bit dequantization is
+            # non-deterministic across two forward passes, which breaks use_reentrant=False.
         )
 
     lora_config = LoraConfig(
