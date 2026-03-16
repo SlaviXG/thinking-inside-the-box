@@ -51,7 +51,15 @@ class KuzuGraphStore(GraphStore):
         """
         Uses COPY FROM temp CSVs for bulk ingestion - required for IBM AML scale.
         Row-by-row inserts would be unacceptably slow on the full dataset.
+
+        Skips ingestion if data already exists - Kuzu's COPY FROM raises a PRIMARY KEY
+        error on duplicate nodes, so re-running start_server() in the same Colab session
+        would crash without this guard.
         """
+        result = self._conn.execute("MATCH (a:Account) RETURN count(a) AS cnt")
+        if result.get_next()[0] > 0:
+            return  # already ingested
+
         with tempfile.TemporaryDirectory() as tmp:
             nodes_path = os.path.join(tmp, "accounts.csv")
             edges_path = os.path.join(tmp, "transactions.csv")
@@ -85,10 +93,8 @@ class KuzuGraphStore(GraphStore):
 
         rows = []
         for result in [outgoing, incoming]:
-            while result.has_next():
+            while result.has_next() and len(rows) < limit:
                 rows.append(result.get_next())
-            if len(rows) >= limit:
-                break
 
         if not rows:
             return f"No transactions found for account {account_id}."

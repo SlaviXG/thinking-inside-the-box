@@ -2,7 +2,8 @@ _SYSTEM_PROMPT = (
     "You are an expert financial forensics AI. Review the provided transaction logs. "
     "Look for signs of money laundering, such as rapid structuring, circular flow, "
     "or pass-through accounts. "
-    "Provide a short, step-by-step reasoning process, then a final conclusion."
+    "Provide a short, step-by-step reasoning process, then end your response with "
+    "exactly one of: VERDICT: SUSPICIOUS or VERDICT: CLEAN."
 )
 
 

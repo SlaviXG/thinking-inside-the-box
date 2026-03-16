@@ -16,8 +16,20 @@ _VERDICT_CLEAN = "VERDICT: CLEAN"
 
 
 def _parse_verdict(response: str) -> int:
-    """Extract binary AML prediction from LLM response text."""
+    """
+    Extract binary AML prediction from LLM response text.
+
+    Checks for the explicit verdict format the model is trained to produce first.
+    This avoids false positives when the model mentions 'suspicious' in reasoning
+    but concludes clean (e.g. 'I see no suspicious activity ... VERDICT: CLEAN').
+    Falls back to keyword matching for early rounds before fine-tuning takes effect.
+    """
     upper = response.upper()
+    if "VERDICT: SUSPICIOUS" in upper:
+        return 1
+    if "VERDICT: CLEAN" in upper:
+        return 0
+    # Fallback: model hasn't learned the verdict format yet
     if "SUSPICIOUS" in upper or "LAUNDERING" in upper:
         return 1
     return 0
