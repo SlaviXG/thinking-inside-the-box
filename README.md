@@ -82,7 +82,58 @@ The graph database layer uses the **Strategy pattern** - `GraphStore` is the abs
 3. **Trilemma Evaluation** - Benchmark against baselines across:
    - **Utility** - F1-Score on AML detection
    - **Efficiency** - Communication volume and latency
-   - **Privacy** - Resilience to data leakage
+   - **Privacy** - Membership Inference Attack accuracy against shared adapter updates
+
+---
+
+## Benchmarking
+
+The evaluation benchmarks this architecture against two baselines across all three axes of the Trilemma.
+
+### Baselines
+
+| Baseline | Description |
+|---|---|
+| **Centralized** | Single model trained on the full merged dataset - upper bound on utility, zero privacy |
+| **FedAvg (full weights)** | Standard FedAvg transmitting full model weights - realistic federation cost, no RAG |
+
+The proposed architecture (**FLoRA + RAG**) is expected to match Centralized utility while beating FedAvg on efficiency and both baselines on privacy.
+
+### Metrics
+
+#### Utility - F1-Score
+
+Macro-averaged F1 on the held-out AML test split, reported per federation round to show convergence behaviour.
+
+The dataset is split at the **account level** (not transaction level). Each source account gets a single binary label - `1` if any of its outgoing transactions are flagged as laundering, `0` otherwise. A stratified 70/15/15 train/val/test split is then applied per node, preserving the laundering ratio in each partition. The test set (15%) is never seen during training or federation.
+
+Each node holds only transactions where `From Bank == node_id`, creating a realistic non-IID partition across clients.
+
+- Higher is better
+- Target: match or exceed Centralized F1 after N rounds
+
+#### Efficiency - Communication Volume and Round Latency
+
+- **Communication volume** - total megabytes transmitted per round (adapter deltas only vs. full weights). FLoRA transmits `2 * rank * hidden_dim` parameters per layer vs. the full parameter count for FedAvg.
+- **Round latency** - wall-clock time per federation round, measured inside the simulation loop.
+
+Both are logged per round and compared across all three configurations.
+
+#### Privacy - Membership Inference Attack Accuracy
+
+A Membership Inference Attack (MIA) is run against the adapter weight updates transmitted to the aggregation server. The attacker is given the delta tensors from one round and attempts to classify whether a specific transaction record was in that node's training partition.
+
+- Measured as **attack accuracy** (0.5 = random chance = perfect privacy, 1.0 = full leakage)
+- The architecture's privacy claim holds if MIA accuracy stays near 0.5, confirming the adapter deltas carry negligible membership signal
+- Compared against a centralized model where the attacker has access to the full model - expected to yield significantly higher MIA accuracy
+
+### Summary Table
+
+| Metric | Centralized | FedAvg (full) | FLoRA + RAG (ours) |
+|---|---|---|---|
+| F1-Score | upper bound | degraded (non-IID) | target: matches Centralized |
+| Comm. Volume / round | N/A | full model size | adapter deltas only (~1% of model) |
+| MIA Accuracy | high (data exposed) | moderate | target: near 0.5 (random) |
 
 ---
 
