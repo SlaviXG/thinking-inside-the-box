@@ -47,6 +47,7 @@ def load_model(config: Config) -> AutoModelForCausalLM:
         config.model_id,
         quantization_config=bnb_config,
         device_map="auto",
+        use_cache=False,  # disabled - incompatible with gradient checkpointing used in kbit training
     )
 
 
@@ -58,7 +59,10 @@ def attach_lora(model: AutoModelForCausalLM, config: Config) -> AutoModelForCaus
     the frozen quantized layers to the adapters.
     """
     if config.load_in_4bit:
-        model = prepare_model_for_kbit_training(model)
+        model = prepare_model_for_kbit_training(
+            model,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+        )
 
     lora_config = LoraConfig(
         r=config.lora_rank,
