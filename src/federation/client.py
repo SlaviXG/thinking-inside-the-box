@@ -74,10 +74,19 @@ class AMLFederatedClient:
             self._graph_store, model, tokenizer, config
         )
 
+        train_pos = int(self._train_df["label"].sum())
+        train_neg = len(self._train_df) - train_pos
+        test_pos  = int(self._test_df["label"].sum())
+
         print(
             f"[Client bank_id={config.bank_id}] "
-            f"train={len(self._train_df)} val={len(self._val_df)} test={len(self._test_df)} accounts"
+            f"train={len(self._train_df)} ({train_pos} pos / {train_neg} neg)  "
+            f"val={len(self._val_df)}  "
+            f"test={len(self._test_df)} ({test_pos} pos)"
         )
+        if train_pos == 0:
+            print(f"  WARNING bank_id={config.bank_id}: no positive training accounts - "
+                  "F1 will be 0 regardless of training. Consider a different bank partition.")
 
     def __del__(self) -> None:
         if hasattr(self, "_graph_store"):
