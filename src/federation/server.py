@@ -121,8 +121,10 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
 
     # Theoretical FedAvg communication cost: full model weights per client per round.
     # Each bank would need to upload and receive a full copy of the 8B model.
-    full_model_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-    fedavg_bytes_per_round = full_model_bytes * config.num_clients
+    # Use float16 (2 bytes/param) - standard FedAvg transmission format regardless
+    # of how the model is quantized in memory for compute.
+    full_model_params = sum(p.numel() for p in model.parameters())
+    fedavg_bytes_per_round = full_model_params * 2 * config.num_clients  # float16 per client
 
     # Instantiate all clients in the main process - all share the same model
     clients = []
@@ -172,7 +174,19 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
         history["comm_bytes_flora"].append(round_comm_bytes)
         history["round_latency_s"].append(round_elapsed)
 
-        # Evaluate phase
+        # MIA per client - must run before evaluate() so the model still holds each
+        # client's local adapter weights (what was actually transmitted on the wire).
+        # evaluate() calls set_parameters(global_params) which would overwrite them.
+        print(f"\n[MIA] Round {round_num}")
+        round_mia = []
+        for i, client in enumerate(clients):
+            client.set_parameters(all_params[i])  # restore local adapter for this client
+            auc = client.mia_score(config.mia_n_members, config.mia_n_nonmembers)
+            print(f"  [mia] bank_id={client._config.bank_id} AUC={auc:.3f}")
+            round_mia.append(auc)
+        history["mia_auc"].append(round_mia)
+
+        # Evaluate phase - loads global params into the model
         round_f1, round_precision, round_recall = [], [], []
         for client in clients:
             _, _, eval_metrics = client.evaluate(global_params, {})
@@ -182,15 +196,6 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
         history["f1"].append(round_f1)
         history["precision"].append(round_precision)
         history["recall"].append(round_recall)
-
-        # MIA per client - measures membership signal in transmitted adapter deltas
-        print(f"\n[MIA] Round {round_num}")
-        round_mia = []
-        for client in clients:
-            auc = client.mia_score(config.mia_n_members, config.mia_n_nonmembers)
-            print(f"  [mia] bank_id={client._config.bank_id} AUC={auc:.3f}")
-            round_mia.append(auc)
-        history["mia_auc"].append(round_mia)
 
     print("\nFederated simulation complete.")
     return history
