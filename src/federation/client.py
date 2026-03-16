@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from torch.optim import AdamW
@@ -165,10 +166,39 @@ class AMLFederatedClient:
         except (RuntimeError, ValueError, KeyError):
             return None
 
+    def _balanced_sample(self, n: int) -> pd.DataFrame:
+        """
+        Build a 50/50 balanced training batch of n total accounts.
+
+        The IBM AML dataset has ~0.05% laundering at transaction level, translating
+        to very few positive accounts per bank partition. Random sampling almost
+        never includes enough positives for the model to learn the SUSPICIOUS class.
+
+        Strategy: take n//2 suspicious accounts (oversample with replacement if
+        fewer than n//2 exist) and n//2 clean accounts, then shuffle.
+        This guarantees the model sees equal class representation every round.
+        """
+        pos = self._train_df[self._train_df["label"] == 1]
+        neg = self._train_df[self._train_df["label"] == 0]
+        n_each = n // 2
+
+        pos_sample = pos.sample(
+            n=n_each, replace=len(pos) < n_each, random_state=None
+        )
+        neg_sample = neg.sample(
+            n=n_each, replace=len(neg) < n_each, random_state=None
+        )
+        return (
+            pd.concat([pos_sample, neg_sample])
+            .sample(frac=1, random_state=None)  # shuffle
+            .reset_index(drop=True)
+        )
+
     def fit(self, parameters, config) -> tuple[list[np.ndarray], int, dict]:
         """
         Local training round on the train split.
         Fine-tunes LoRA adapters to produce correct SUSPICIOUS/CLEAN verdicts.
+        Uses balanced 50/50 sampling to counter the extreme class imbalance in IBM AML.
         """
         self.set_parameters(parameters)
         self._model.train()
@@ -178,10 +208,8 @@ class AMLFederatedClient:
             lr=self._config.learning_rate,
         )
 
-        sample = self._train_df.sample(
-            n=min(self._config.max_train_samples, len(self._train_df)),
-            random_state=None,
-        )
+        n = min(self._config.max_train_samples, len(self._train_df))
+        sample = self._balanced_sample(n)
 
         total_loss = 0.0
         n_trained = 0
