@@ -127,12 +127,16 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
     fedavg_bytes_per_round = full_model_params * 2 * config.num_clients  # float16 per client
 
     # Instantiate all clients in the main process - all share the same model
+    # bank_ids overrides the default sequential 1..num_clients assignment,
+    # allowing selection of partitions with better class balance.
+    bank_id_list = (
+        list(config.bank_ids)
+        if config.bank_ids is not None
+        else list(range(1, config.num_clients + 1))
+    )
     clients = []
-    for cid in range(config.num_clients):
-        client_config = Config.from_dict({
-            **config.__dict__,
-            "bank_id": cid + 1,  # bank_id=0 means "all banks"; start from 1
-        })
+    for bank_id in bank_id_list:
+        client_config = Config.from_dict({**config.__dict__, "bank_id": bank_id})
         clients.append(AMLFederatedClient(client_config, model, tokenizer))
 
     strategy = FLoRAStrategy(lora_rank=config.lora_rank)

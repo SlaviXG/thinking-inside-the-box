@@ -6,7 +6,8 @@ class Config:
     # Data
     csv_path: str = "data/LI-Small_Trans.csv"
     db_base_dir: str = "data/kuzu_dbs"
-    bank_id: int = 0  # Which bank partition this node owns; 0 = all banks
+    bank_id: int = 0          # Which bank partition this node owns; 0 = all banks
+    bank_ids: tuple = None    # Bank IDs used in federation; None = (1 .. num_clients)
 
     # Train/Val/Test split ratios (must sum to 1.0)
     train_ratio: float = 0.70
