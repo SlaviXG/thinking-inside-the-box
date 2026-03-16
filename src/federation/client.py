@@ -243,7 +243,9 @@ class AMLFederatedClient:
             account_id = str(row["account_id"])
             true_label = int(row["label"])
             try:
-                response = self._pipeline.investigate(account_id)
+                response = self._pipeline.investigate(
+                    account_id, max_new_tokens=self._config.max_eval_tokens
+                )
                 pred_label = _parse_verdict(response)
             except (RuntimeError, ValueError, KeyError) as e:
                 print(f"  [eval] skipping {account_id}: {e}")

@@ -27,9 +27,11 @@ class InvestigationPipeline:
         self._config = config
         self._device = next(model.parameters()).device
 
-    def investigate(self, account_id: str) -> str:
+    def investigate(self, account_id: str, max_new_tokens: int = None) -> str:
         """
         Full RAG + reasoning pass for one account.
+        max_new_tokens overrides config.max_new_tokens when provided - used by
+        evaluate() to cap generation length for speed without affecting qualitative runs.
         Returns the decoded LLM response string.
         """
         print(f"--- Investigating account {account_id} ---")
@@ -51,11 +53,12 @@ class InvestigationPipeline:
         ).to(self._device)
 
         # Step 4: generate (Reasoning) - eval mode, no gradient tracking
+        n_tokens = max_new_tokens if max_new_tokens is not None else self._config.max_new_tokens
         self._model.eval()
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
-                max_new_tokens=self._config.max_new_tokens,
+                max_new_tokens=n_tokens,
                 temperature=self._config.temperature,
                 do_sample=True,
                 pad_token_id=self._tokenizer.eos_token_id,
