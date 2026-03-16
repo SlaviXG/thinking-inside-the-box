@@ -28,7 +28,7 @@ class Config:
     use_fast_tokenizer: bool = False  # False required - fast tokenizer produces Ġ/Ċ artefacts
     load_in_4bit: bool = True
     max_new_tokens: int = 1024   # tokens for full qualitative investigation
-    max_eval_tokens: int = 512   # tokens during evaluate() - verdict fits in 512, full CoT not needed
+    max_eval_tokens: int = 1024  # tokens during evaluate() - override to reduce eval time if needed
     temperature: float = 0.3
 
     # LoRA
