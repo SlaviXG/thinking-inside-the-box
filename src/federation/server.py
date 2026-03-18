@@ -5,6 +5,7 @@ import numpy as np
 from src.config import Config
 from src.federation.client import AMLFederatedClient
 from src.model.model_loader import load_model, load_tokenizer, attach_lora
+from src.security.encryption import AdapterEncryption
 
 
 class FLoRAStrategy:
@@ -142,6 +143,10 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
     strategy = FLoRAStrategy(lora_rank=config.lora_rank)
     global_params = clients[0].get_parameters()
 
+    # Server-side decryption instances - one per client, built once from each
+    # client's public key. Keys are stable for the lifetime of the simulation.
+    server_cipher = [AdapterEncryption.from_key(c.encryption_key) for c in clients]
+
     history = {
         "train_loss": [],               # list[list[float]]
         "f1": [],                       # list[list[float]]
@@ -160,17 +165,30 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
 
         round_start = time.time()
 
-        # Fit phase - sequential to keep one model in VRAM
-        all_params, round_losses, round_comm_bytes = [], [], []
-        for client in clients:
-            params, n_samples, metrics = client.fit(
-                global_params, {"local_epochs": config.local_epochs}
-            )
-            all_params.append(params)
-            round_losses.append(metrics["train_loss"])
-            round_comm_bytes.append(sum(arr.nbytes for arr in params))
+        # Fit phase - sequential to keep one model in VRAM.
+        # After each client trains, its adapter delta is immediately encrypted
+        # to simulate wire transmission. The server decrypts before aggregation
+        # using the client's key - raw weight values never exist outside each node.
+        all_encrypted, round_losses, round_comm_bytes = [], [], []
+        for client, cipher in zip(clients, server_cipher):
+            # Server -> client: encrypt global params with the client's key before dispatch
+            global_enc = cipher.encrypt(global_params)
+            global_for_client = client.decrypt_parameters(global_enc)
 
-        # Aggregate with FLoRA
+            params, n_samples, metrics = client.fit(
+                global_for_client, {"local_epochs": config.local_epochs}
+            )
+            # Client -> server: client encrypts its adapter delta before transmission
+            encrypted = client.encrypt_parameters(params)
+            all_encrypted.append(encrypted)
+            round_losses.append(metrics["train_loss"])
+            round_comm_bytes.append(len(encrypted))
+
+        # Decrypt and aggregate with FLoRA
+        all_params = [
+            cipher.decrypt(enc)
+            for cipher, enc in zip(server_cipher, all_encrypted)
+        ]
         global_params = strategy.aggregate(round_num, all_params)
 
         round_elapsed = time.time() - round_start
@@ -192,8 +210,9 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
 
         # Evaluate phase - loads global params into the model
         round_f1, round_precision, round_recall = [], [], []
-        for client in clients:
-            _, _, eval_metrics = client.evaluate(global_params, {})
+        for client, cipher in zip(clients, server_cipher):
+            global_enc = cipher.encrypt(global_params)
+            _, _, eval_metrics = client.evaluate(client.decrypt_parameters(global_enc), {})
             round_f1.append(eval_metrics["f1"])
             round_precision.append(eval_metrics["precision"])
             round_recall.append(eval_metrics["recall"])

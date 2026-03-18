@@ -68,6 +68,8 @@ src/
 - federation/
   - client.py                 - AMLFederatedClient - local LoRA training + F1 evaluation per node
   - server.py                 - FLoRAStrategy (stacking + SVD aggregation), start_server()
+- security/
+  - encryption.py             - AdapterEncryption - AES-128-CBC per-client symmetric encryption of adapter deltas
 
 ```
 

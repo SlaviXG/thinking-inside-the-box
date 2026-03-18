@@ -10,6 +10,7 @@ from src.graph.base import GraphStore
 from src.graph.factory import GraphStoreFactory
 from src.pipeline.investigation import InvestigationPipeline
 from src.pipeline.prompt_builder import build_investigation_prompt
+from src.security.encryption import AdapterEncryption
 
 _VERDICT_SUSPICIOUS = "VERDICT: SUSPICIOUS"
 _VERDICT_CLEAN = "VERDICT: CLEAN"
@@ -88,6 +89,11 @@ class AMLFederatedClient:
             print(f"  WARNING bank_id={config.bank_id}: no positive training accounts - "
                   "F1 will be 0 regardless of training. Consider a different bank partition.")
 
+        # Each client owns its own encryption key. The server uses client.encryption_key
+        # to decrypt adapter deltas after transmission. Raw weight values are never
+        # carried on the wire in plaintext.
+        self._encryption = AdapterEncryption()
+
     def __del__(self) -> None:
         if hasattr(self, "_graph_store"):
             self._graph_store.close()
@@ -119,6 +125,21 @@ class AMLFederatedClient:
             param.data = torch.tensor(arr, dtype=param.dtype).to(param.device)
         for (_, param), arr in zip(b_items, parameters[n:]):
             param.data = torch.tensor(arr, dtype=param.dtype).to(param.device)
+
+    # --- Encrypted parameter transmission ---
+
+    @property
+    def encryption_key(self) -> bytes:
+        """Public key used by the server to decrypt this client's transmissions."""
+        return self._encryption.key
+
+    def encrypt_parameters(self, params: list[np.ndarray]) -> bytes:
+        """Encrypt adapter deltas before they leave this node."""
+        return self._encryption.encrypt(params)
+
+    def decrypt_parameters(self, payload: bytes) -> list[np.ndarray]:
+        """Decrypt adapter deltas received from the server (e.g. global params)."""
+        return self._encryption.decrypt(payload)
 
     # --- Training ---
 
