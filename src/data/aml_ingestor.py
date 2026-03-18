@@ -24,11 +24,14 @@ class AMLIngestor:
     def load_partition(self) -> pd.DataFrame:
         """
         Read CSV and filter to rows where From Bank == config.bank_id.
-        bank_id=0 loads all banks (single-node Phase 2 testing).
+        bank_id=0 with bank_ids set loads only those banks merged (centralised baseline).
+        bank_id=0 with bank_ids=None loads all banks.
         """
         df = pd.read_csv(self._config.csv_path)
         if self._config.bank_id != 0:
             df = df[df["From Bank"] == self._config.bank_id]
+        elif self._config.bank_ids is not None:
+            df = df[df["From Bank"].isin(self._config.bank_ids)]
         return df.reset_index(drop=True)
 
     def split(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:

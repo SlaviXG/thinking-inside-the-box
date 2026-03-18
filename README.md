@@ -67,7 +67,8 @@ src/
   - investigation.py          - InvestigationPipeline (Facade)
 - federation/
   - client.py                 - AMLFederatedClient - local LoRA training + F1 evaluation per node
-  - server.py                 - FLoRAStrategy (stacking + SVD aggregation), start_server()
+  - server.py                 - FLoRAStrategy (SVD), FedAvgStrategy (weighted avg), start_server()
+  - baselines.py              - run_centralised() - merged single-node utility upper bound
 - security/
   - encryption.py             - AdapterEncryption - AES-128-CBC per-client symmetric encryption of adapter deltas
 

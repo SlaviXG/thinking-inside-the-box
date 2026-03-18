@@ -29,6 +29,7 @@ class FLoRAStrategy:
         self,
         server_round: int,
         all_params: list[list[np.ndarray]],
+        all_n_samples: list[int] = None,  # unused by FLoRA but kept for interface parity
     ) -> list[np.ndarray]:
         """
         Aggregate LoRA parameters from all clients using FLoRA stacking + SVD.
@@ -91,7 +92,44 @@ class FLoRAStrategy:
         return A_new, B_new
 
 
-def start_server(config: Config, model=None, tokenizer=None) -> dict:
+class FedAvgStrategy:
+    """
+    Standard FedAvg aggregation applied to LoRA adapter matrices.
+
+    Computes a weighted average of each adapter parameter across all clients,
+    weighted by the number of training samples each client contributed.
+    This is the standard McMahan et al. (2017) aggregation rule applied to
+    LoRA adapters instead of full model weights.
+
+    Communication cost is still only the adapter deltas (not full weights),
+    but aggregation quality is lower than FLoRA because matrix averaging
+    introduces rank drift - the averaged adapters do not preserve the
+    geometric structure of the original low-rank factorization.
+    """
+
+    def aggregate(
+        self,
+        server_round: int,
+        all_params: list[list[np.ndarray]],
+        all_n_samples: list[int] = None,
+    ) -> list[np.ndarray]:
+        n_clients = len(all_params)
+        if not all_n_samples or sum(all_n_samples) == 0:
+            weights = [1.0 / n_clients] * n_clients
+        else:
+            total = sum(all_n_samples)
+            weights = [n / total for n in all_n_samples]
+
+        print(f"\n[FedAvg] Round {server_round} - averaging {n_clients} clients")
+        aggregated = [
+            sum(w * p[i] for w, p in zip(weights, all_params)).astype(np.float32)
+            for i in range(len(all_params[0]))
+        ]
+        print(f"[FedAvg] Round {server_round} - aggregation complete")
+        return aggregated
+
+
+def start_server(config: Config, model=None, tokenizer=None, aggregation: str = "flora") -> dict:
     """
     In-process federated simulation - all clients share one model instance.
 
@@ -103,12 +141,16 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
     model and tokenizer can be passed in if already loaded in the session to
     avoid reloading weights into VRAM.
 
+    aggregation selects the server-side aggregation strategy:
+      "flora"  - FLoRA stacking + SVD (default, ours)
+      "fedavg" - weighted average of adapter matrices (McMahan et al. 2017 baseline)
+
     Returns a history dict with per-round metrics for all three Trilemma axes:
       - train_loss:              list[list[float]]  - per round, per client
       - f1 / precision / recall: list[list[float]]  - per round, per client
       - round_latency_s:         list[float]        - wall-clock seconds per round
       - comm_bytes_flora:        list[list[int]]    - adapter delta bytes per round per client
-      - comm_bytes_fedavg_per_round: int            - theoretical FedAvg cost (constant)
+      - comm_bytes_fedavg_per_round: int            - theoretical full-weight FedAvg cost (constant)
       - mia_auc:                 list[list[float]]  - MIA AUC per round per client
     """
     if model is None or tokenizer is None:
@@ -140,7 +182,10 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
         client_config = Config.from_dict({**config.__dict__, "bank_id": bank_id})
         clients.append(AMLFederatedClient(client_config, model, tokenizer))
 
-    strategy = FLoRAStrategy(lora_rank=config.lora_rank)
+    if aggregation == "fedavg":
+        strategy = FedAvgStrategy()
+    else:
+        strategy = FLoRAStrategy(lora_rank=config.lora_rank)
     global_params = clients[0].get_parameters()
 
     # Server-side decryption instances - one per client, built once from each
@@ -169,7 +214,7 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
         # After each client trains, its adapter delta is immediately encrypted
         # to simulate wire transmission. The server decrypts before aggregation
         # using the client's key - raw weight values never exist outside each node.
-        all_encrypted, round_losses, round_comm_bytes = [], [], []
+        all_encrypted, round_losses, round_comm_bytes, all_n_samples = [], [], [], []
         for client, cipher in zip(clients, server_cipher):
             # Server -> client: encrypt global params with the client's key before dispatch
             global_enc = cipher.encrypt(global_params)
@@ -181,15 +226,16 @@ def start_server(config: Config, model=None, tokenizer=None) -> dict:
             # Client -> server: client encrypts its adapter delta before transmission
             encrypted = client.encrypt_parameters(params)
             all_encrypted.append(encrypted)
+            all_n_samples.append(n_samples)
             round_losses.append(metrics["train_loss"])
             round_comm_bytes.append(len(encrypted))
 
-        # Decrypt and aggregate with FLoRA
+        # Decrypt and aggregate
         all_params = [
             cipher.decrypt(enc)
             for cipher, enc in zip(server_cipher, all_encrypted)
         ]
-        global_params = strategy.aggregate(round_num, all_params)
+        global_params = strategy.aggregate(round_num, all_params, all_n_samples)
 
         round_elapsed = time.time() - round_start
         history["train_loss"].append(round_losses)
