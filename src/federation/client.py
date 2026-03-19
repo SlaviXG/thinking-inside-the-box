@@ -275,26 +275,42 @@ class AMLFederatedClient:
 
     # --- Evaluation ---
 
+    def _eval_sample(self) -> pd.DataFrame:
+        """
+        Stratified evaluation sample: ALL positive test accounts + negatives to fill budget.
+
+        Random sampling risks missing the rare positive class entirely (1-2% rate means
+        a 60-account random sample may have zero positives, making F1 undefined).
+        This method guarantees every positive test account is evaluated, then fills the
+        remaining budget with randomly sampled negatives.
+
+        max_eval_samples == 0: full test split (use for final publication runs).
+        max_eval_samples == N: all positives + up to (N - n_pos) negatives.
+        """
+        if self._config.max_eval_samples == 0:
+            return self._test_df
+
+        pos = self._test_df[self._test_df["label"] == 1]
+        neg = self._test_df[self._test_df["label"] == 0]
+        n_neg = max(0, self._config.max_eval_samples - len(pos))
+        neg_sample = neg.sample(n=min(n_neg, len(neg)), random_state=42)
+        return (
+            pd.concat([pos, neg_sample])
+            .sample(frac=1, random_state=42)
+            .reset_index(drop=True)
+        )
+
     def evaluate(self, parameters, config) -> tuple[float, int, dict]:
         """
         Evaluate on the test split.
         Parses LLM verdicts and computes F1 against ground truth Is Laundering labels.
-        Uses the full test split when max_eval_samples == 0, otherwise samples.
+        Uses stratified sampling (_eval_sample) to guarantee positive class coverage.
         Returns (loss=1-F1, num_examples, metrics).
         """
         self.set_parameters(parameters)
         self._model.eval()
 
-        if (
-            self._config.max_eval_samples == 0
-            or self._config.max_eval_samples >= len(self._test_df)
-        ):
-            sample = self._test_df
-        else:
-            sample = self._test_df.sample(
-                n=self._config.max_eval_samples,
-                random_state=None,
-            )
+        sample = self._eval_sample()
 
         y_true, y_pred = [], []
         for _, row in sample.iterrows():
