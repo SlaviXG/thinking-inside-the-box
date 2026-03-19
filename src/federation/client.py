@@ -277,25 +277,27 @@ class AMLFederatedClient:
 
     def _eval_sample(self) -> pd.DataFrame:
         """
-        Stratified evaluation sample: ALL positive test accounts + negatives to fill budget.
+        Balanced evaluation sample: all positive test accounts + equal number of negatives.
 
-        Random sampling risks missing the rare positive class entirely (1-2% rate means
-        a 60-account random sample may have zero positives, making F1 undefined).
-        This method guarantees every positive test account is evaluated, then fills the
-        remaining budget with randomly sampled negatives.
+        Mirrors the 1:1 ratio used in _balanced_sample() for training, applied to the
+        test split. This guarantees every positive test account is evaluated (critical
+        at 1-2% class rate where random sampling often gives zero positives) while
+        keeping eval size small and the class ratio interpretable.
 
-        max_eval_samples == 0: full test split (use for final publication runs).
-        max_eval_samples == N: all positives + up to (N - n_pos) negatives.
+        max_eval_samples == 0: full test split (for final publication runs).
+        max_eval_samples != 0: all positives + min(n_pos, n_neg) negatives.
         """
         if self._config.max_eval_samples == 0:
             return self._test_df
 
         pos = self._test_df[self._test_df["label"] == 1]
         neg = self._test_df[self._test_df["label"] == 0]
-        n_neg = max(0, self._config.max_eval_samples - len(pos))
-        neg_sample = neg.sample(n=min(n_neg, len(neg)), random_state=42)
+        n = min(len(pos), len(neg))
         return (
-            pd.concat([pos, neg_sample])
+            pd.concat([
+                pos.sample(n=n, replace=len(pos) < n, random_state=42),
+                neg.sample(n=n, replace=len(neg) < n, random_state=42),
+            ])
             .sample(frac=1, random_state=42)
             .reset_index(drop=True)
         )
