@@ -37,13 +37,16 @@ class NetworkXGraphStore(GraphStore):
                 is_laundering=edge.get("is_laundering"),
             )
 
-    def retrieve_context(self, account_id: str, limit: int = 20) -> str:
+    def retrieve_context(self, account_id: str, limit: int = 20, mode: str = "flat") -> str:
+        if mode == "graph":
+            return self._retrieve_graph_context(account_id)
+        return self._retrieve_flat_context(account_id, limit)
+
+    def _retrieve_flat_context(self, account_id: str, limit: int) -> str:
         if account_id not in self._graph:
             return f"No transactions found for account {account_id}."
-
         subgraph = nx.ego_graph(self._graph, account_id, radius=1)
         edges = list(subgraph.edges(data=True))[:limit]
-
         context = f"Transaction History for Account {account_id}:\n"
         for u, v, data in edges:
             context += (
@@ -51,6 +54,84 @@ class NetworkXGraphStore(GraphStore):
                 f" ({data['format']}) to {v} at {data['timestamp']}\n"
             )
         return context
+
+    def _retrieve_graph_context(self, account_id: str) -> str:
+        if account_id not in self._graph:
+            return f"No transactions found for account {account_id}."
+
+        bank_id = self._graph.nodes[account_id].get("bank")
+
+        outgoing = [
+            (v, self._graph.nodes[v].get("bank"), d)
+            for _, v, d in self._graph.out_edges(account_id, data=True)
+        ]
+        incoming = [
+            (u, d)
+            for u, _, d in self._graph.in_edges(account_id, data=True)
+            if self._graph.nodes[u].get("bank") == bank_id
+        ]
+
+        # Intra-bank 2-hop chains
+        chains = []
+        for _, mid, _ in self._graph.out_edges(account_id, data=True):
+            if self._graph.nodes[mid].get("bank") == bank_id:
+                for _, dest, _ in self._graph.out_edges(mid, data=True):
+                    if self._graph.nodes[dest].get("bank") == bank_id and dest != account_id:
+                        chains.append((mid, dest))
+
+        if not outgoing and not incoming:
+            return f"No transactions found for account {account_id}."
+
+        lines = [f"Account {account_id} (Bank {bank_id}):"]
+
+        if outgoing:
+            amounts = [d["amount_paid"] for _, _, d in outgoing]
+            intra_out = [(v, d) for v, bk, d in outgoing if bk == bank_id]
+            cross_out = [(v, bk, d) for v, bk, d in outgoing if bk != bank_id]
+            unique_dest = len(set(v for v, _, _ in outgoing))
+            lines.append(
+                f"\nOutgoing ({len(outgoing)} tx, {unique_dest} unique destinations):"
+            )
+            lines.append(
+                f"  Volume: {sum(amounts):,.2f} total | "
+                f"{sum(amounts)/len(amounts):,.2f} mean | {max(amounts):,.2f} max"
+            )
+            lines.append(
+                f"  Intra-bank: {len(intra_out)} tx to "
+                f"{len(set(v for v, _ in intra_out))} accounts at Bank {bank_id}"
+            )
+            if cross_out:
+                ext_banks = set(bk for _, bk, _ in cross_out)
+                lines.append(
+                    f"  Cross-bank: {len(cross_out)} tx to {len(ext_banks)} other bank(s)"
+                    f" - chain not visible beyond bank boundary"
+                )
+            if len(amounts) >= 4:
+                q3 = sorted(amounts)[int(len(amounts) * 0.75)]
+                high = [a for a in amounts if a >= q3]
+                if len(high) >= 3:
+                    lines.append(
+                        f"  High-amount clustering: {len(high)} tx >= {q3:,.0f}"
+                        f" (top-quartile concentration)"
+                    )
+
+        if incoming:
+            in_amounts = [d["amount_paid"] for _, d in incoming]
+            lines.append(
+                f"\nIntra-bank incoming ({len(incoming)} tx, "
+                f"{len(set(u for u, _ in incoming))} unique senders):"
+            )
+            lines.append(
+                f"  Volume: {sum(in_amounts):,.2f} total | "
+                f"{sum(in_amounts)/len(in_amounts):,.2f} mean"
+            )
+
+        if chains:
+            lines.append(f"\nIntra-bank chains ({len(chains[:3])}):")
+            for mid, dest in chains[:3]:
+                lines.append(f"  {account_id} -> {mid} -> {dest}")
+
+        return "\n".join(lines)
 
     def query(self, query_str: str, params: dict[str, Any]) -> list[list[Any]]:
         """

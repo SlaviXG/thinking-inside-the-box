@@ -38,7 +38,9 @@ class InvestigationPipeline:
 
         # Step 1: retrieve graph context (Knowledge)
         context = self._graph.retrieve_context(
-            account_id, limit=self._config.retrieval_limit
+            account_id,
+            limit=self._config.retrieval_limit,
+            mode=self._config.retrieval_mode,
         )
 
         # Step 2: build prompt

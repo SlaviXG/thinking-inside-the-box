@@ -24,10 +24,15 @@ class GraphStore(ABC):
         ...
 
     @abstractmethod
-    def retrieve_context(self, account_id: str, limit: int) -> str:
+    def retrieve_context(self, account_id: str, limit: int, mode: str = "flat") -> str:
         """
-        Return a formatted natural-language string of transactions
-        for the given account, ready to be embedded in an LLM prompt.
+        Return a formatted natural-language string describing account activity,
+        ready to be embedded in an LLM prompt.
+
+        mode="flat"  - raw transaction list, up to limit rows
+        mode="graph" - bank-scoped topology stats: velocity, fan-out/fan-in,
+                       intra-bank chains, cross-bank exposure summary.
+                       Strictly limited to what one bank node can observe.
         """
         ...
 

@@ -50,6 +50,9 @@ class Config:
     mia_n_members: int = 50        # Training accounts sampled for MIA (members)
     mia_n_nonmembers: int = 50     # Test accounts sampled for MIA (non-members)
 
+    # RAG
+    retrieval_mode: str = "flat"   # "flat" = raw transaction list | "graph" = bank-scoped topology stats
+
     # Checkpointing
     checkpoint_path: str = None    # If set, history is written to this JSON path after each round
 

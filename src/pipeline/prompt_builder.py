@@ -16,9 +16,6 @@ def build_investigation_prompt(account_id: str, graph_context: str) -> list[dict
         {"role": "system", "content": _SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": (
-                f"Investigate the following transactions for suspicious activity:"
-                f"\n\n{graph_context}"
-            ),
+            "content": f"Investigate the following account activity for suspicious activity:\n\n{graph_context}",
         },
     ]
