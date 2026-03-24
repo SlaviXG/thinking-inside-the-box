@@ -50,6 +50,9 @@ class Config:
     mia_n_members: int = 50        # Training accounts sampled for MIA (members)
     mia_n_nonmembers: int = 50     # Test accounts sampled for MIA (non-members)
 
+    # Checkpointing
+    checkpoint_path: str = None    # If set, history is written to this JSON path after each round
+
     def __post_init__(self) -> None:
         if not (0 < self.train_ratio < 1):
             raise ValueError(f"train_ratio must be between 0 and 1, got {self.train_ratio}")

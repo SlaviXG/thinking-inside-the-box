@@ -1,3 +1,4 @@
+import json
 import time
 
 import numpy as np
@@ -265,6 +266,11 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
         history["f1"].append(round_f1)
         history["precision"].append(round_precision)
         history["recall"].append(round_recall)
+
+        if config.checkpoint_path:
+            with open(config.checkpoint_path, "w") as f:
+                json.dump(history, f)
+            print(f"[checkpoint] Round {round_num} saved to {config.checkpoint_path}")
 
     print("\nFederated simulation complete.")
     return history
