@@ -149,12 +149,15 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
       "fedavg" - weighted average of adapter matrices (McMahan et al. 2017 baseline)
 
     Returns a history dict with per-round metrics for all three Trilemma axes:
-      - train_loss:              list[list[float]]  - per round, per client
-      - f1 / precision / recall: list[list[float]]  - per round, per client
-      - round_latency_s:         list[float]        - wall-clock seconds per round
-      - comm_bytes_flora:        list[list[int]]    - adapter delta bytes per round per client
-      - comm_bytes_fedavg_per_round: int            - theoretical full-weight FedAvg cost (constant)
-      - mia_auc:                 list[list[float]]  - MIA AUC per round per client
+      - train_loss:                  list[list[float]]  - per round, per client
+      - f1 / precision / recall:     list[list[float]]  - per round, per client
+      - fit_latency_s:               list[float]        - fit + aggregate wall-clock per round
+      - mia_latency_s:               list[float]        - MIA scoring wall-clock per round
+      - eval_latency_s:              list[float]        - evaluate() wall-clock per round
+      - round_latency_s:             list[float]        - total wall-clock per round
+      - comm_bytes_flora:            list[list[int]]    - adapter delta bytes per round per client
+      - comm_bytes_fedavg_per_round: int                - theoretical full-weight FedAvg cost (constant)
+      - mia_auc:                     list[list[float]]  - MIA AUC per round per client
     """
     if model is None or tokenizer is None:
         print("Loading base model and tokenizer...")
@@ -200,7 +203,10 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
         "f1": [],                       # list[list[float]]
         "precision": [],                # list[list[float]]
         "recall": [],                   # list[list[float]]
-        "round_latency_s": [],          # list[float]
+        "fit_latency_s": [],            # list[float] - fit + aggregate only
+        "mia_latency_s": [],            # list[float] - MIA scoring only
+        "eval_latency_s": [],           # list[float] - evaluate() only
+        "round_latency_s": [],          # list[float] - total wall-clock per round
         "comm_bytes_flora": [],         # list[list[int]]
         "comm_bytes_fedavg_per_round": fedavg_bytes_per_round,  # int (constant)
         "mia_auc": [],                  # list[list[float]]
@@ -217,6 +223,7 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
         # After each client trains, its adapter delta is immediately encrypted
         # to simulate wire transmission. The server decrypts before aggregation
         # using the client's key - raw weight values never exist outside each node.
+        fit_start = time.time()
         all_encrypted, round_losses, round_comm_bytes, all_n_samples = [], [], [], []
         for client, cipher in zip(clients, server_cipher):
             # Server -> client: encrypt global params with the client's key before dispatch
@@ -239,16 +246,17 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
             for cipher, enc in zip(server_cipher, all_encrypted)
         ]
         global_params = strategy.aggregate(round_num, all_params, all_n_samples)
+        fit_elapsed = time.time() - fit_start
 
-        round_elapsed = time.time() - round_start
         history["train_loss"].append(round_losses)
         history["comm_bytes_flora"].append(round_comm_bytes)
-        history["round_latency_s"].append(round_elapsed)
+        history["fit_latency_s"].append(fit_elapsed)
 
         # MIA per client - must run before evaluate() so the model still holds each
         # client's local adapter weights (what was actually transmitted on the wire).
         # evaluate() calls set_parameters(global_params) which would overwrite them.
         print(f"\n[MIA] Round {round_num}")
+        mia_start = time.time()
         round_mia = []
         for i, client in enumerate(clients):
             client.set_parameters(all_params[i])  # restore local adapter for this client
@@ -256,8 +264,10 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
             print(f"  [mia] bank_id={client._config.bank_id} AUC={auc:.3f}")
             round_mia.append(auc)
         history["mia_auc"].append(round_mia)
+        history["mia_latency_s"].append(time.time() - mia_start)
 
         # Evaluate phase - loads global params into the model
+        eval_start = time.time()
         round_f1, round_precision, round_recall = [], [], []
         for client, cipher in zip(clients, server_cipher):
             global_enc = cipher.encrypt(global_params)
@@ -268,6 +278,9 @@ def start_server(config: Config, model=None, tokenizer=None, aggregation: str = 
         history["f1"].append(round_f1)
         history["precision"].append(round_precision)
         history["recall"].append(round_recall)
+        history["eval_latency_s"].append(time.time() - eval_start)
+
+        history["round_latency_s"].append(time.time() - round_start)
 
         if config.checkpoint_path:
             with open(config.checkpoint_path, "w") as f:
