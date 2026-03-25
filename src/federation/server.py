@@ -14,9 +14,10 @@ class FLoRAStrategy:
     FLoRA aggregation strategy.
 
     Instead of averaging LoRA adapter matrices (which introduces mathematical noise),
-    this strategy stacks the A and B matrices from all clients and decomposes
-    the result back to rank r via SVD. This gives the exact weighted sum of
-    all adapter contributions with no approximation error.
+    this strategy stacks the A and B matrices from all clients, computes their
+    mean weight delta, then decomposes back to rank r via SVD (Ye et al. 2023).
+    This preserves the low-rank structure while faithfully representing all
+    client contributions.
 
     Parameter ordering convention (must match AMLFederatedClient.get_parameters()):
       parameters[:n_lora] = all lora_A matrices (shape: r x in_features each)
@@ -76,13 +77,14 @@ class FLoRAStrategy:
           B_stack: (out_features, n*r)
           A_stack: (n*r, in_features)
 
-        Compute delta_W = B_stack @ A_stack  (exact sum of all client contributions)
-        then factorize back to rank r via SVD:
+        Compute the mean weight delta across all clients, then factorize back
+        to rank r via SVD (Ye et al. FLoRA, 2023):
           delta_W = U @ diag(S) @ Vt
           B_new = U[:, :r] @ diag(sqrt(S[:r]))     shape: (out_features, r)
           A_new = diag(sqrt(S[:r])) @ Vt[:r, :]    shape: (r, in_features)
         """
-        delta_W = B_stack @ A_stack  # (out_features, in_features)
+        n_clients = B_stack.shape[1] // self._r
+        delta_W = (B_stack @ A_stack) / n_clients  # mean delta, not sum
         U, S, Vt = np.linalg.svd(delta_W, full_matrices=False)
 
         r = self._r
