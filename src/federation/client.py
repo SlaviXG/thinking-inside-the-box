@@ -152,7 +152,8 @@ class AMLFederatedClient:
         and target token ids for the verdict response.
         """
         context = self._pipeline._graph.retrieve_context(
-            account_id, limit=self._config.retrieval_limit
+            account_id, limit=self._config.retrieval_limit,
+            mode=self._config.retrieval_mode,
         )
         messages = build_investigation_prompt(account_id, context)
         target_text = _VERDICT_SUSPICIOUS if is_laundering else _VERDICT_CLEAN

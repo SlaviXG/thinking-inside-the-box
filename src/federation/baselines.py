@@ -41,11 +41,13 @@ def run_centralised(config: Config, model=None, tokenizer=None) -> dict:
     params = client.get_parameters()
 
     history = {
-        "train_loss": [],   # list[list[float]] - wraps in list for format parity
+        "train_loss": [],       # list[list[float]] - wraps in list for format parity
         "f1": [],
         "precision": [],
         "recall": [],
-        "round_latency_s": [],
+        "fit_latency_s": [],    # list[float]
+        "eval_latency_s": [],   # list[float]
+        "round_latency_s": [],  # list[float] - total
     }
 
     for round_num in range(1, config.num_rounds + 1):
@@ -54,18 +56,25 @@ def run_centralised(config: Config, model=None, tokenizer=None) -> dict:
         print(f"{'='*50}")
 
         round_start = time.time()
+
+        fit_start = time.time()
         params, n_samples, fit_metrics = client.fit(
             params, {"local_epochs": config.local_epochs}
         )
+        fit_elapsed = time.time() - fit_start
+
+        eval_start = time.time()
         _, _, eval_metrics = client.evaluate(params, {})
-        elapsed = time.time() - round_start
+        eval_elapsed = time.time() - eval_start
 
         # Wrap in list to match start_server() history format (per-client lists)
         history["train_loss"].append([fit_metrics["train_loss"]])
         history["f1"].append([eval_metrics["f1"]])
         history["precision"].append([eval_metrics["precision"]])
         history["recall"].append([eval_metrics["recall"]])
-        history["round_latency_s"].append(elapsed)
+        history["fit_latency_s"].append(fit_elapsed)
+        history["eval_latency_s"].append(eval_elapsed)
+        history["round_latency_s"].append(time.time() - round_start)
 
     print("\nCentralised baseline complete.")
     return history
