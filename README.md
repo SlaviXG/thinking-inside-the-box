@@ -91,16 +91,20 @@ The graph database layer uses the **Strategy pattern** - `GraphStore` is the abs
 
 ## Benchmarking
 
-The evaluation benchmarks this architecture against two baselines across all three axes of the Trilemma.
+The evaluation benchmarks six conditions across all three axes of the Trilemma: aggregation strategy (FLoRA, FedAvg, Centralised) crossed with retrieval mode (flat transaction list, graph topology augmented). All federated conditions use the same RAG pipeline - the retrieval mode is an independent variable, not a property of the aggregation strategy.
 
-### Baselines
+### Conditions
 
-| Baseline | Description |
-|---|---|
-| **Centralized** | Single model trained on the full merged dataset - upper bound on utility, zero privacy |
-| **FedAvg (full weights)** | Standard FedAvg transmitting full model weights - realistic federation cost, no RAG |
+| Condition | Aggregation | Retrieval |
+|---|---|---|
+| **Centralised + flat** | Single merged node (upper bound) | Raw transaction list |
+| **Centralised + graph** | Single merged node (upper bound) | Flat + topology summary |
+| **FedAvg + flat** | Weighted average of adapter matrices | Raw transaction list |
+| **FedAvg + graph** | Weighted average of adapter matrices | Flat + topology summary |
+| **FLoRA + flat** | SVD stacking of adapter matrices | Raw transaction list |
+| **FLoRA + graph** | SVD stacking of adapter matrices | Flat + topology summary |
 
-The proposed architecture (**FLoRA + RAG**) is expected to match Centralized utility while beating FedAvg on efficiency and both baselines on privacy.
+FLoRA and FedAvg both transmit only adapter deltas in the simulation. The communication cost reported for FedAvg is a **theoretical reference** - the cost it would incur transmitting full model weights under the standard McMahan et al. (2017) protocol - used as the efficiency baseline for comparison.
 
 ### Metrics
 
@@ -117,26 +121,26 @@ Each node holds only transactions where `From Bank == node_id`, creating a reali
 
 #### Efficiency - Communication Volume and Round Latency
 
-- **Communication volume** - total megabytes transmitted per round (adapter deltas only vs. full weights). FLoRA transmits `2 * rank * hidden_dim` parameters per layer vs. the full parameter count for FedAvg.
+- **Communication volume** - bytes transmitted per round. Both FLoRA and FedAvg transmit adapter deltas only in the simulation. The reported FedAvg cost is theoretical (full float16 model weights per client per round) and serves as the efficiency reference. FLoRA transmits `2 * rank * hidden_dim` parameters per layer.
 - **Round latency** - wall-clock time per federation round, measured inside the simulation loop.
 
 Both are logged per round and compared across all three configurations.
 
-#### Privacy - Membership Inference Attack Accuracy
+#### Privacy - Membership Inference Attack AUC
 
-A Membership Inference Attack (MIA) is run against the adapter weight updates transmitted to the aggregation server. The attacker is given the delta tensors from one round and attempts to classify whether a specific transaction record was in that node's training partition.
+A loss-based Membership Inference Attack (Yeom et al., 2018) is run against the adapter weight updates transmitted to the aggregation server. The attacker intercepts adapter deltas, runs inference on candidate accounts, and uses per-sample cross-entropy loss as a membership score.
 
-- Measured as **attack accuracy** (0.5 = random chance = perfect privacy, 1.0 = full leakage)
-- The architecture's privacy claim holds if MIA accuracy stays near 0.5, confirming the adapter deltas carry negligible membership signal
-- Compared against a centralized model where the attacker has access to the full model - expected to yield significantly higher MIA accuracy
+- Measured as **MIA AUC** (0.5 = random chance = perfect privacy, 1.0 = full leakage)
+- The architecture's privacy claim holds if MIA AUC stays near 0.5, confirming the adapter deltas carry negligible membership signal
+- Centralised has no privacy guarantee by construction - all data is pooled and no adapter isolation exists
 
 ### Summary Table
 
-| Metric | Centralized | FedAvg (full) | FLoRA + RAG (ours) |
+| Metric | Centralised | FedAvg + RAG | FLoRA + RAG (ours) |
 |---|---|---|---|
-| F1-Score | upper bound | degraded (non-IID) | target: matches Centralized |
-| Comm. Volume / round | N/A | full model size | adapter deltas only (~1% of model) |
-| MIA Accuracy | high (data exposed) | moderate | target: near 0.5 (random) |
+| F1-Score | upper bound | competitive | target: matches Centralised |
+| Comm. Volume / round | N/A | ~25 GB (theoretical full-weight ref.) | ~52 MB (adapter deltas, ~499x reduction) |
+| MIA AUC | N/A (no privacy) | target: near 0.5 | target: near 0.5 |
 
 ---
 
