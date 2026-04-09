@@ -71,9 +71,13 @@ class KuzuGraphStore(GraphStore):
             self._conn.execute(f'COPY Transaction FROM "{edges_path}" (HEADER=TRUE)')
 
     def retrieve_context(self, account_id: str, limit: int = 20, mode: str = "flat") -> str:
-        if mode == "graph":
-            return self._retrieve_graph_context(account_id)
-        return self._retrieve_flat_context(account_id, limit)
+        flat = self._retrieve_flat_context(account_id, limit)
+        if mode != "graph":
+            return flat
+        topology = self._retrieve_graph_context(account_id)
+        if "No transactions found" in topology:
+            return flat
+        return flat + "\n\nTopology Analysis:\n" + topology
 
     def _retrieve_flat_context(self, account_id: str, limit: int) -> str:
         """

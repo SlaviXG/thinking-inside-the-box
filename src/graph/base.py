@@ -30,8 +30,10 @@ class GraphStore(ABC):
         ready to be embedded in an LLM prompt.
 
         mode="flat"  - raw transaction list, up to limit rows
-        mode="graph" - bank-scoped topology stats: velocity, fan-out/fan-in,
-                       intra-bank chains, cross-bank exposure summary.
+        mode="graph" - flat transaction list plus a "Topology Analysis" section:
+                       velocity, fan-out/fan-in, intra-bank chains, cross-bank
+                       exposure summary. The flat rows give the model raw evidence;
+                       the topology section adds pre-computed structural signals.
                        Strictly limited to what one bank node can observe.
         """
         ...
