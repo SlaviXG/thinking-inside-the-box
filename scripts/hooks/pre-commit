@@ -1,0 +1,9 @@
+#!/bin/sh
+# Auto-bump the notebook's cell-0 timestamp whenever the notebook is part of
+# the staged commit. Reinstall after a fresh clone via:
+#   cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+NB="CSC3094_Thinking_Inside_The_Box.ipynb"
+if git diff --cached --name-only | grep -qx "$NB"; then
+    python scripts/bump_nb_timestamp.py || exit 1
+    git add "$NB"
+fi
