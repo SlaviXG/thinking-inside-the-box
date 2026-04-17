@@ -33,10 +33,17 @@ class Config:
     temperature: float = 0.3
 
     # LoRA
-    lora_rank: int = 8
-    lora_alpha: int = 16
+    # rank=16 with broader targets gives the adapter enough capacity to
+    # model richer context (e.g. named AML patterns in rag mode). The
+    # original rank=8 / q_proj+v_proj config under-fit once the topology
+    # section carried real structural signals.
+    lora_rank: int = 16
+    lora_alpha: int = 32
     lora_dropout: float = 0.05
-    lora_target_modules: tuple = ("q_proj", "v_proj")
+    lora_target_modules: tuple = (
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj",
+    )
 
     # Federation training
     num_rounds: int = 3
@@ -44,14 +51,21 @@ class Config:
     local_epochs: int = 1
     learning_rate: float = 2e-4
     max_train_samples: int = 100   # Accounts sampled per fit() round (GPU budget)
-    max_eval_samples: int = 0      # Accounts sampled per evaluate(); 0 = full test split
+    # Target total accounts per evaluate() call (balanced: half positive, half
+    # negative, capped by class availability). 0 = full test split.
+    # Default 50 yields ~25 per class - enough to keep round-to-round F1
+    # variance below the effect sizes we're measuring.
+    max_eval_samples: int = 50
 
     # Membership Inference Attack
     mia_n_members: int = 50        # Training accounts sampled for MIA (members)
     mia_n_nonmembers: int = 50     # Test accounts sampled for MIA (non-members)
 
     # RAG
-    retrieval_mode: str = "flat"   # "flat" = raw transaction list | "graph" = bank-scoped topology stats
+    # "flat" = raw transaction list only (no RAG augmentation) |
+    # "rag"  = flat list + locally-detected AML pattern labels (pass-through,
+    #          structuring, cycle, rapid-burst, fan-out) from the graph store.
+    retrieval_mode: str = "flat"
 
     # Checkpointing
     checkpoint_path: str = None    # If set, history is written to this JSON path after each round

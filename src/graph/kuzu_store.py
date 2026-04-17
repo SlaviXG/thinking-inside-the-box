@@ -7,12 +7,28 @@ import kuzu
 
 from src.config import Config
 from src.graph.base import GraphStore
+from src.graph.patterns import (
+    Chain,
+    InEdge,
+    OutEdge,
+    detect_patterns,
+    format_patterns,
+    parse_timestamp,
+)
 
 
 class KuzuGraphStore(GraphStore):
     """
     Embedded graph database backend using Kuzu.
     One .db file per simulated bank node - maps directly to the federation architecture.
+
+    Retrieval in "rag" mode is deliberately bank-scoped: only edges within the
+    node's own partition are observable. Cross-bank chains are outside the
+    privacy boundary by design - the architecture trades cross-bank chain
+    visibility for raw-data confidentiality, and the pattern detectors in
+    src/graph/patterns.py recover locally-observable structural signals
+    (pass-through, structuring, cycle, rapid-burst, fan-out) without crossing
+    that boundary.
     """
 
     def __init__(self, config: Config) -> None:
@@ -72,12 +88,12 @@ class KuzuGraphStore(GraphStore):
 
     def retrieve_context(self, account_id: str, limit: int = 20, mode: str = "flat") -> str:
         flat = self._retrieve_flat_context(account_id, limit)
-        if mode != "graph":
+        if mode != "rag":
             return flat
-        topology = self._retrieve_graph_context(account_id)
+        topology = self._retrieve_rag_context(account_id)
         if "No transactions found" in topology:
             return flat
-        return flat + "\n\nTopology Analysis:\n" + topology
+        return flat + "\n\n" + topology
 
     def _retrieve_flat_context(self, account_id: str, limit: int) -> str:
         """
@@ -106,21 +122,20 @@ class KuzuGraphStore(GraphStore):
             context += f"- {from_id} sent {amount} {currency} ({fmt}) to {to_id} at {timestamp}\n"
         return context
 
-    def _retrieve_graph_context(self, account_id: str) -> str:
+    def _collect_edges(self, account_id: str):
         """
-        Bank-scoped topology stats. Strictly limited to what one federation node
-        can observe: outgoing transactions (full), intra-bank incoming (sender at
-        same bank), and intra-bank 2-hop chains. Cross-bank flows are noted but
-        not followed - the chain is invisible beyond the bank boundary.
+        Pull the bank-scoped edge set this node is allowed to observe:
+        outgoing (full), intra-bank incoming, intra-bank 2-hop chains.
+        Returns (bank_id, outgoing, incoming, chains, cross_bank_note) or
+        (None, ...) if the account is not in this partition.
         """
         bank_res = self._conn.execute(
             "MATCH (a:Account {id: $id}) RETURN a.bank", {"id": account_id}
         )
         if not bank_res.has_next():
-            return f"No transactions found for account {account_id}."
+            return None, [], [], [], None
         bank_id = bank_res.get_next()[0]
 
-        # Outgoing: full visibility
         out_res = self._conn.execute(
             """MATCH (a:Account {id: $id})-[t:Transaction]->(b:Account)
                RETURN b.id, b.bank, t.amount_paid, t.timestamp""",
@@ -128,9 +143,14 @@ class KuzuGraphStore(GraphStore):
         )
         outgoing = []
         while out_res.has_next():
-            outgoing.append(out_res.get_next())  # (to_id, to_bank, amount, timestamp)
+            to_id, to_bank, amount, timestamp = out_res.get_next()
+            outgoing.append(OutEdge(
+                to_id=to_id,
+                to_bank=to_bank,
+                amount=float(amount),
+                timestamp=parse_timestamp(timestamp),
+            ))
 
-        # Intra-bank incoming: sender must be at same bank
         in_res = self._conn.execute(
             """MATCH (b:Account)-[t:Transaction]->(a:Account {id: $id})
                WHERE b.bank = a.bank
@@ -139,77 +159,65 @@ class KuzuGraphStore(GraphStore):
         )
         incoming = []
         while in_res.has_next():
-            incoming.append(in_res.get_next())  # (from_id, amount, timestamp)
+            from_id, amount, timestamp = in_res.get_next()
+            incoming.append(InEdge(
+                from_id=from_id,
+                amount=float(amount),
+                timestamp=parse_timestamp(timestamp),
+            ))
 
-        # Intra-bank 2-hop chains: all three accounts at same bank
         chain_res = self._conn.execute(
             """MATCH (a:Account {id: $id})-[t1:Transaction]->(b:Account)-[t2:Transaction]->(c:Account)
                WHERE a.bank = b.bank AND a.bank = c.bank AND c.id <> $id
                RETURN b.id, c.id, t1.amount_paid, t2.amount_paid, t1.timestamp
-               LIMIT 3""",
+               LIMIT 10""",
             {"id": account_id},
         )
         chains = []
         while chain_res.has_next():
-            chains.append(chain_res.get_next())  # (mid, dest, amt1, amt2, ts)
+            mid, dest, amt1, amt2, ts = chain_res.get_next()
+            chains.append(Chain(
+                mid=mid,
+                dest=dest,
+                amt1=float(amt1),
+                amt2=float(amt2),
+                timestamp=parse_timestamp(ts),
+            ))
 
-        if not outgoing and not incoming:
+        cross_out = [o for o in outgoing if o.to_bank != bank_id]
+        cross_bank_note = None
+        if cross_out:
+            ext_banks = {o.to_bank for o in cross_out}
+            cross_bank_note = (
+                f"- Cross-bank exposure: {len(cross_out)} tx to "
+                f"{len(ext_banks)} other bank(s); chains past the bank boundary "
+                f"are not observable (privacy scope)."
+            )
+
+        return bank_id, outgoing, incoming, chains, cross_bank_note
+
+    def _retrieve_rag_context(self, account_id: str) -> str:
+        """
+        Locally-detected AML pattern labels (bank-scoped).
+        Uses edges this node observes to detect named patterns (pass-through,
+        structuring, cycle, rapid-burst, fan-out) rather than emitting generic
+        summary statistics. The flat transaction list already carries raw
+        evidence - this section adds concrete, labelled signals the model
+        can attend to during both training and inference.
+        """
+        bank_id, outgoing, incoming, chains, cross_bank_note = self._collect_edges(account_id)
+        if bank_id is None or (not outgoing and not incoming):
             return f"No transactions found for account {account_id}."
 
-        lines = [f"Account {account_id} (Bank {bank_id}):"]
+        patterns = detect_patterns(account_id, outgoing, incoming, chains)
+        return format_patterns(account_id, bank_id, patterns, cross_bank_note)
 
-        if outgoing:
-            amounts = [r[2] for r in outgoing]
-            intra_out = [r for r in outgoing if r[1] == bank_id]
-            cross_out = [r for r in outgoing if r[1] != bank_id]
-            unique_dest = len(set(r[0] for r in outgoing))
-            lines.append(
-                f"\nOutgoing ({len(outgoing)} tx, {unique_dest} unique destinations):"
-            )
-            lines.append(
-                f"  Volume: {sum(amounts):,.2f} total | "
-                f"{sum(amounts)/len(amounts):,.2f} mean | {max(amounts):,.2f} max"
-            )
-            lines.append(
-                f"  Intra-bank: {len(intra_out)} tx to "
-                f"{len(set(r[0] for r in intra_out))} accounts at Bank {bank_id}"
-            )
-            if cross_out:
-                ext_banks = set(r[1] for r in cross_out)
-                lines.append(
-                    f"  Cross-bank: {len(cross_out)} tx to {len(ext_banks)} other bank(s)"
-                    f" - chain not visible beyond bank boundary"
-                )
-            # High-amount clustering: flag if 3+ transactions are in top quartile
-            if len(amounts) >= 4:
-                q3 = sorted(amounts)[int(len(amounts) * 0.75)]
-                high = [a for a in amounts if a >= q3]
-                if len(high) >= 3:
-                    lines.append(
-                        f"  High-amount clustering: {len(high)} tx >= {q3:,.0f}"
-                        f" (top-quartile concentration)"
-                    )
-
-        if incoming:
-            in_amounts = [r[1] for r in incoming]
-            lines.append(
-                f"\nIntra-bank incoming ({len(incoming)} tx, "
-                f"{len(set(r[0] for r in incoming))} unique senders):"
-            )
-            lines.append(
-                f"  Volume: {sum(in_amounts):,.2f} total | "
-                f"{sum(in_amounts)/len(in_amounts):,.2f} mean"
-            )
-
-        if chains:
-            lines.append(f"\nIntra-bank chains ({len(chains)}):")
-            for mid, dest, amt1, amt2, ts in chains:
-                lines.append(
-                    f"  {account_id} -> {mid} -> {dest}"
-                    f" ({amt1:,.0f} then {amt2:,.0f}, from {ts})"
-                )
-
-        return "\n".join(lines)
+    def structural_signals(self, account_id: str) -> list[str]:
+        """Return AML pattern names for this account - used by rationale-augmented training."""
+        bank_id, outgoing, incoming, chains, _ = self._collect_edges(account_id)
+        if bank_id is None:
+            return []
+        return [p.name for p in detect_patterns(account_id, outgoing, incoming, chains)]
 
     def query(self, query_str: str, params: dict[str, Any]) -> list[list[Any]]:
         result = self._conn.execute(query_str, params)

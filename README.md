@@ -57,6 +57,7 @@ src/
   - kuzu_store.py             - KuzuGraphStore - embedded DB, one .db file per node
   - networkx_store.py         - NetworkXGraphStore - in-memory, for tests
   - neo4j_store.py            - Neo4jGraphStore - stub for real deployment (Phase 4)
+  - patterns.py               - bank-scoped AML pattern detection (pass-through, structuring, cycle, rapid-burst, fan-out)
   - factory.py                - GraphStoreFactory - creates backend from config
 - model/
   - model_loader.py           - load_model(), load_tokenizer(), attach_lora(), decode_output()
@@ -91,18 +92,18 @@ The graph database layer uses the **Strategy pattern** - `GraphStore` is the abs
 
 ## Benchmarking
 
-The evaluation benchmarks six conditions across all three axes of the Trilemma: aggregation strategy (FLoRA, FedAvg, Centralised) crossed with retrieval mode (flat transaction list, graph topology augmented). All federated conditions use the same RAG pipeline - the retrieval mode is an independent variable, not a property of the aggregation strategy.
+The evaluation benchmarks six conditions across all three axes of the Trilemma: aggregation strategy (FLoRA, FedAvg, Centralised) crossed with retrieval mode (flat raw transactions, RAG-augmented with locally-detected AML patterns). The retrieval mode is an independent variable that isolates the contribution of the RAG pipeline from the aggregation strategy.
 
 ### Conditions
 
 | Condition | Aggregation | Retrieval |
 |---|---|---|
 | **Centralised + flat** | Single merged node (upper bound) | Raw transaction list |
-| **Centralised + graph** | Single merged node (upper bound) | Flat + topology summary |
+| **Centralised + rag**  | Single merged node (upper bound) | Raw transactions + locally-detected AML patterns |
 | **FedAvg + flat** | Weighted average of adapter matrices | Raw transaction list |
-| **FedAvg + graph** | Weighted average of adapter matrices | Flat + topology summary |
+| **FedAvg + rag**  | Weighted average of adapter matrices | Raw transactions + locally-detected AML patterns |
 | **FLoRA + flat** | SVD stacking of adapter matrices | Raw transaction list |
-| **FLoRA + graph** | SVD stacking of adapter matrices | Flat + topology summary |
+| **FLoRA + rag**  | SVD stacking of adapter matrices | Raw transactions + locally-detected AML patterns |
 
 FLoRA and FedAvg both transmit only adapter deltas in the simulation. The communication cost reported for FedAvg is a **theoretical reference** - the cost it would incur transmitting full model weights under the standard McMahan et al. (2017) protocol - used as the efficiency baseline for comparison.
 

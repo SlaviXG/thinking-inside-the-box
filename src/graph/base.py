@@ -29,14 +29,25 @@ class GraphStore(ABC):
         Return a formatted natural-language string describing account activity,
         ready to be embedded in an LLM prompt.
 
-        mode="flat"  - raw transaction list, up to limit rows
-        mode="graph" - flat transaction list plus a "Topology Analysis" section:
-                       velocity, fan-out/fan-in, intra-bank chains, cross-bank
-                       exposure summary. The flat rows give the model raw evidence;
-                       the topology section adds pre-computed structural signals.
-                       Strictly limited to what one bank node can observe.
+        mode="flat" - raw transaction list, up to limit rows (no RAG augmentation)
+        mode="rag"  - flat transaction list plus a locally-detected pattern
+                      section (pass-through, structuring, cycle, rapid-burst,
+                      fan-out). The flat rows give the model raw evidence;
+                      the pattern section adds named AML signals the model
+                      can latch onto during training and inference.
+                      Bank-scoped by design: cross-bank chains are outside
+                      the node's privacy boundary.
         """
         ...
+
+    def structural_signals(self, account_id: str) -> list[str]:
+        """
+        Return the names of AML patterns detected for this account, or [].
+        Used by training to build rationale-augmented targets so the adapter
+        learns to map topology signals to the verdict. Default is no-op so
+        stub backends (e.g. Neo4j) can be instantiated without implementing it.
+        """
+        return []
 
     @abstractmethod
     def query(self, query_str: str, params: dict[str, Any]) -> list[list[Any]]:

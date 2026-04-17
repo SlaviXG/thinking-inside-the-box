@@ -143,20 +143,39 @@ class AMLFederatedClient:
 
     # --- Training ---
 
+    def _build_target_text(self, account_id: str, is_laundering: int) -> str:
+        """
+        Rationale-augmented target for rag retrieval mode: the label is prefixed
+        with a short sentence naming the locally-detected AML patterns (or their
+        absence). This gives the LoRA adapter gradient signal on the pattern
+        tokens so it learns to map topology signals to the verdict, rather than
+        learning P(verdict | prompt_hash) while ignoring the topology block.
+        Flat mode keeps the bare verdict - there are no signals to reason over.
+        """
+        verdict = _VERDICT_SUSPICIOUS if is_laundering else _VERDICT_CLEAN
+        if self._config.retrieval_mode != "rag":
+            return verdict
+        signals = self._pipeline._graph.structural_signals(account_id)
+        if signals:
+            rationale = f"Structural signals: {', '.join(signals)}. "
+        else:
+            rationale = "No structural AML patterns detected. "
+        return rationale + verdict
+
     def _build_training_example(
         self, account_id: str, is_laundering: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Build (input_ids, attention_mask, labels) for one supervised training example.
         Labels are -100 for all prompt tokens (ignored in cross-entropy loss)
-        and target token ids for the verdict response.
+        and target token ids for the rationale + verdict response.
         """
         context = self._pipeline._graph.retrieve_context(
             account_id, limit=self._config.retrieval_limit,
             mode=self._config.retrieval_mode,
         )
         messages = build_investigation_prompt(account_id, context)
-        target_text = _VERDICT_SUSPICIOUS if is_laundering else _VERDICT_CLEAN
+        target_text = self._build_target_text(account_id, is_laundering)
 
         prompt = self._tokenizer.apply_chat_template(
             messages,
@@ -278,26 +297,36 @@ class AMLFederatedClient:
 
     def _eval_sample(self) -> pd.DataFrame:
         """
-        Balanced evaluation sample: all positive test accounts + equal number of negatives.
+        Balanced evaluation sample: 50/50 positive/negative, sized per the
+        max_eval_samples budget.
 
-        Mirrors the 1:1 ratio used in _balanced_sample() for training, applied to the
-        test split. This guarantees every positive test account is evaluated (critical
-        at 1-2% class rate where random sampling often gives zero positives) while
-        keeping eval size small and the class ratio interpretable.
+        max_eval_samples == 0: full test split (rigorous but expensive; use
+            for final publication runs).
+        max_eval_samples  > 0: target total sample size. Each class is capped
+            at max_eval_samples // 2 and at class availability (no upsampling
+            with replacement - greedy decoding makes duplicate accounts
+            produce identical predictions, so replacement adds no stability).
 
-        max_eval_samples == 0: full test split (for final publication runs).
-        max_eval_samples != 0: all positives + min(n_pos, n_neg) negatives.
+        The primary F1-stability mechanism is greedy decoding in
+        InvestigationPipeline; this method just caps cost.
         """
         if self._config.max_eval_samples == 0:
             return self._test_df
 
         pos = self._test_df[self._test_df["label"] == 1]
         neg = self._test_df[self._test_df["label"] == 0]
-        n = min(len(pos), len(neg))
+        if len(pos) == 0 or len(neg) == 0:
+            return self._test_df  # cannot balance - fall back to whatever is there
+
+        cap_each = self._config.max_eval_samples // 2
+        n_each = min(cap_each, len(pos), len(neg))
+        if n_each == 0:
+            return self._test_df
+
         return (
             pd.concat([
-                pos.sample(n=n, replace=len(pos) < n, random_state=42),
-                neg.sample(n=n, replace=len(neg) < n, random_state=42),
+                pos.sample(n=n_each, random_state=42),
+                neg.sample(n=n_each, random_state=42),
             ])
             .sample(frac=1, random_state=42)
             .reset_index(drop=True)
