@@ -54,12 +54,15 @@ class InvestigationPipeline:
         # Step 2: build prompt
         messages = build_investigation_prompt(account_id, context)
 
-        # Step 3: tokenize
+        # Step 3: tokenize (truncate from the left if the prompt blows the
+        # configured budget - keeps the assistant_generation marker intact)
         inputs = self._tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
+            truncation=True,
+            max_length=self._config.max_prompt_tokens,
         ).to(self._device)
 
         # Step 4: generate (Reasoning) - eval mode, no gradient tracking

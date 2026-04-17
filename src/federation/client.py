@@ -16,6 +16,18 @@ _VERDICT_SUSPICIOUS = "VERDICT: SUSPICIOUS"
 _VERDICT_CLEAN = "VERDICT: CLEAN"
 
 
+_SUSPICIOUS_HINTS = (
+    "SUSPICIOUS",
+    "LAUNDERING",
+    "DETECTED",          # model echoed a retriever pattern line
+    "PASS-THROUGH",
+    "STRUCTURING",
+    "RAPID-BURST",
+    "FAN-OUT",
+    "INTRA-BANK CYCLE",  # narrower than "CYCLE" alone to avoid false positives
+)
+
+
 def _parse_verdict(response: str) -> int:
     """
     Extract binary AML prediction from LLM response text.
@@ -23,16 +35,19 @@ def _parse_verdict(response: str) -> int:
     Checks for the explicit verdict format the model is trained to produce first.
     This avoids false positives when the model mentions 'suspicious' in reasoning
     but concludes clean (e.g. 'I see no suspicious activity ... VERDICT: CLEAN').
-    Falls back to keyword matching for early rounds before fine-tuning takes effect.
+    Falls back to keyword matching for early rounds before fine-tuning takes
+    effect - including the rag pattern names, since an under-trained model may
+    echo "DETECTED pass-through" from the context without yet emitting a
+    formal VERDICT line, and such an echo is itself a strong suspicion signal.
     """
     upper = response.upper()
     if "VERDICT: SUSPICIOUS" in upper:
         return 1
     if "VERDICT: CLEAN" in upper:
         return 0
-    # Fallback: model hasn't learned the verdict format yet
-    if "SUSPICIOUS" in upper or "LAUNDERING" in upper:
-        return 1
+    for hint in _SUSPICIOUS_HINTS:
+        if hint in upper:
+            return 1
     return 0
 
 
@@ -145,22 +160,25 @@ class AMLFederatedClient:
 
     def _build_target_text(self, account_id: str, is_laundering: int) -> str:
         """
-        Rationale-augmented target for rag retrieval mode: the label is prefixed
-        with a short sentence naming the locally-detected AML patterns (or their
-        absence). This gives the LoRA adapter gradient signal on the pattern
-        tokens so it learns to map topology signals to the verdict, rather than
-        learning P(verdict | prompt_hash) while ignoring the topology block.
-        Flat mode keeps the bare verdict - there are no signals to reason over.
+        Verdict-first target. The verdict token sequence is emitted before any
+        rationale so that a truncated or under-trained response still carries a
+        parseable verdict - without this ordering, greedy decoding on an
+        unconverged adapter ran out of generation budget mid-reasoning and the
+        verdict parser fell back to all-zeros, flooring F1 for the positive
+        class.
+
+        In rag mode the rationale names the locally-detected AML patterns
+        (or their absence), giving the adapter gradient on the pattern
+        tokens so it learns to map topology signals to the verdict rather
+        than P(verdict | prompt_hash).
         """
         verdict = _VERDICT_SUSPICIOUS if is_laundering else _VERDICT_CLEAN
         if self._config.retrieval_mode != "rag":
             return verdict
         signals = self._pipeline._graph.structural_signals(account_id)
         if signals:
-            rationale = f"Structural signals: {', '.join(signals)}. "
-        else:
-            rationale = "No structural AML patterns detected. "
-        return rationale + verdict
+            return f"{verdict}. Structural signals: {', '.join(signals)}."
+        return f"{verdict}. No structural AML patterns detected."
 
     def _build_training_example(
         self, account_id: str, is_laundering: int
@@ -182,6 +200,8 @@ class AMLFederatedClient:
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
+            truncation=True,
+            max_length=self._config.max_prompt_tokens,
         ).to(self._device)
 
         target_ids = self._tokenizer(

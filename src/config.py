@@ -30,6 +30,12 @@ class Config:
     load_in_4bit: bool = True
     max_new_tokens: int = 1024   # tokens for full qualitative investigation
     max_eval_tokens: int = 1024  # tokens during evaluate() - override to reduce eval time if needed
+    # Hard cap on prompt token length passed to apply_chat_template (truncated
+    # from the left to preserve the assistant_start marker). DeepSeek-R1-Distill
+    # supports 32K, so 3072 leaves comfortable headroom for max_new_tokens=1024
+    # while bounding freak inputs (unusually long retrieval blocks) that would
+    # otherwise push total context near the model's cap.
+    max_prompt_tokens: int = 3072
     temperature: float = 0.3
 
     # LoRA
