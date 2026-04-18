@@ -1,0 +1,42 @@
+{
+  "csv_path": "data/LI-Small_Trans.csv",
+  "db_base_dir": "data/kuzu_dbs",
+  "bank_id": 0,
+  "bank_ids": [
+    20,
+    11,
+    12
+  ],
+  "train_ratio": 0.7,
+  "val_ratio": 0.15,
+  "graph_backend": "kuzu",
+  "retrieval_limit": 20,
+  "retrieval_depth": 2,
+  "neo4j_uri": "bolt://localhost:7687",
+  "neo4j_user": "neo4j",
+  "neo4j_password": "password",
+  "model_id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+  "use_fast_tokenizer": false,
+  "load_in_4bit": true,
+  "max_new_tokens": 1024,
+  "max_eval_tokens": 1024,
+  "temperature": 0.3,
+  "lora_rank": 8,
+  "lora_alpha": 16,
+  "lora_dropout": 0.05,
+  "lora_target_modules": [
+    "q_proj",
+    "v_proj"
+  ],
+  "num_rounds": 10,
+  "num_clients": 3,
+  "local_epochs": 1,
+  "learning_rate": 0.0002,
+  "max_train_samples": 100,
+  "max_eval_samples": 1,
+  "mia_n_members": 50,
+  "mia_n_nonmembers": 50,
+  "retrieval_mode": "flat",
+  "checkpoint_path": "/content/drive/MyDrive/thinking-inside-the-box/2026-04-02/history_flora_flat.json",
+  "aggregation": "centralised"
+}
