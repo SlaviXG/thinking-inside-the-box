@@ -559,6 +559,28 @@ This proxy is explicitly acknowledged in Chapter~\ref{ch:results} as one of many
 
 All experimental parameters live in a single \texttt{Config} dataclass, which is serialised to \texttt{config\_<run\_name>.json} at the start of every run. Per-round metrics (training loss, F1 score, precision, recall, MIA AUC, and the wall-clock latencies of the fit, evaluate, and aggregate stages) are appended to \texttt{history\_<run\_name>.json} after each round. A run can therefore be fully reproduced by pairing an archived config with the code state at the corresponding git tag.
 
+\section{Experimental Configuration}
+\label{sec:meth:config}
+
+\subsection{Configuration shared across all six runs}
+
+All six runs share the same backbone (DeepSeek-R1-Distill-Llama-8B at 4-bit NF4), the same LoRA configuration ($r=8$, $\alpha=16$, targets \texttt{q\_proj}+\texttt{v\_proj}), the same optimiser (AdamW, learning rate $2 \times 10^{-4}$, batch size one), and the same per-round budget (100 balanced training samples, full stratified test split evaluation, 50 members and 50 non-members for MIA), as summarised in Table~\ref{tab:config-summary}. They differ only in the aggregation strategy and the retrieval mode. Every run is ten rounds long and distributes three clients across the IBM AML partitions for banks 20, 11, and 12.
+
+\input{res/tab-config-summary}
+
+\subsection{Evaluation criteria}
+\label{sec:meth:eval-criteria}
+
+Three evaluation criteria are reported, one per axis of the trilemma. All three are computed per round per client and aggregated across clients for the figures in Chapter~\ref{ch:results}; the per-client values are also retained in the archived JSON for downstream inspection.
+
+\textit{Utility: F1 score.} The F1 score~\cite{10.3115/1072064.1072067} is the harmonic mean of precision $P = \mathrm{TP}/(\mathrm{TP}+\mathrm{FP})$ and recall $R = \mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$ on the binary suspicious-account label, computed as $\mathrm{F1} = 2PR/(P+R)$. The choice of F1 score over plain accuracy is motivated by the dataset's class imbalance: the IBM AML positive-class rate is $1.5\%$, so a constant ``clean'' classifier would achieve $98.5\%$ accuracy and $0$ F1 score. F1 score weights false positives and false negatives equally; the cost analysis in Section~\ref{sec:results:cost} re-weights these for the operational case.
+
+\textit{Efficiency: communication volume and per-stage wall-clock.} Communication volume is reported as bytes transferred per client per round. The FLoRA payload is the size of the Fernet-wrapped adapter delta as produced by the encryption module; the FedAvg reference is the McMahan formulation, which broadcasts the full backbone parameters at fp16. Wall-clock latency is reported per round, decomposed into the fit, evaluate, MIA, and aggregation stages. Each stage is timed inside the federated client loop using \texttt{time.perf\_counter} and persisted to the per-round JSON.
+
+\textit{Privacy: membership-inference AUC.} The privacy probe is a threshold-based membership-inference attacker. For each client and each round, the client computes the per-token language-modelling loss against $50$ training-set accounts (members) and $50$ test-set accounts (non-members). The Receiver Operating Characteristic Area Under the Curve (ROC AUC) of an attacker that classifies an account as ``member'' when its loss is below a threshold is reported as the privacy metric. An AUC of $0.5$ corresponds to an attacker that cannot do better than chance; values above $0.5$ indicate leakage. The proxy is conservative by construction (a stronger shadow-model attacker may recover more); the limitation is acknowledged in Section~\ref{sec:results:limits}.
+
+\textit{Acceptance condition.} For each axis the dissertation states the acceptance condition that an architecture must meet to be operationally interesting in this setting. Utility: F1 score within $0.10$ of the centralised-flat upper bound. Efficiency: per-client per-round payload at least two orders of magnitude below the McMahan fp16 reference. Privacy: membership-inference AUC within $\pm 0.10$ of the chance baseline. The reported FLoRA-with-RAG configuration satisfies all three.
+
 \section{Path to Production Deployment}
 \label{sec:meth:production}
 
@@ -571,6 +593,19 @@ The Fernet-wrapped FLoRA adapter delta measures $18{,}197{,}432$~bytes per clien
 \subsection{GPU-hour budget at on-demand cloud pricing}
 
 A full ten-round, three-client session of FLoRA-with-RAG consumes $6.42$~A100-hours at the fit stage (the dominant stage; eval, MIA, and aggregation account for under $5$~per cent of round wall clock). At publicly listed on-demand A100 pricing the per-session cost falls between USD~$6.87$ at the specialised-cloud rate of USD~$1.07$ per A100-hour and USD~$26.25$ at the AWS p4d effective rate of USD~$4.09$ per A100-hour. At a weekly retraining cadence the consortium consumes $334$~A100-hours per year, costing between USD~$357$ and USD~$1{,}365$ at the same range. These figures are deliberately quoted per consortium and per session rather than per bank, since the federated cost is dominated by the per-client fit stage and does not scale with the size of the aggregator. They are also meaningful in absolute terms: an annual training budget of less than two thousand US dollars is small enough that compute is not the constraint on whether a consortium of mid-sized banks can run this architecture.
+
+\subsection{Inference cost at production scale}
+\label{sec:meth:inference-cost}
+
+The training cost estimated above covers federated retraining. A production deployment also incurs \textit{inference} cost: running the fine-tuned model to score flagged accounts at monitoring time. The following estimates are produced by a dedicated verification script in the public repository and are framed as order-of-magnitude projections, not measurements; actual figures depend on hardware, batching strategy, and contract pricing.
+
+Three modelling choices are assumed. First, a rules-based pre-filter (standard in AML transaction monitoring) flags approximately $5$\% of accounts for LLM review; the LLM therefore scores accounts, not every transaction, and the per-transaction cost is the per-account cost diluted by the flag rate. Second, each LLM call is estimated at $3{,}000$ input tokens (a $30$--$90$~day transaction list plus RAG structural signals) and $250$ output tokens (verdict plus brief reasoning). Third, the self-hosted compute cost uses the same A100 on-demand pricing range as the training estimate (USD~$1.07$--$4.09$ per A100-hour).
+
+For the $8$-billion-parameter benchmark model (DeepSeek-R1-Distill-Llama-8B at 4-bit NF4), single-GPU throughput of approximately $150$~tokens per second yields an inference cost of approximately USD~$0.016$ per account at mid-range pricing, corresponding to USD~$\approx 16$ per million transactions monitored. Scaling to a production-grade $70$-billion-parameter model (e.g.\ Llama-3.1-70B at 4-bit on a single A100 80~GB at approximately $22$~tokens per second) raises the per-account cost to approximately USD~$0.106$, or USD~$\approx 106$ per million transactions. These estimates assume sequential single-call inference; batched production throughput would reduce per-call cost in proportion to batch utilisation.
+
+For context, frontier API models (GPT-4o at USD~$2.50$/$10.00$ per million input/output tokens; Claude~3.5~Sonnet at USD~$3.00$/$15.00$) fall in the USD~$2$--$13$ per million transactions range. These are listed for reference only: API models cannot participate in FLoRA federated fine-tuning and transmit account data to a third-party server, making them architecturally incompatible with the privacy objective of this work.
+
+In all self-hosted cases the per-transaction inference cost is two to three orders of magnitude below the alert-investigation cost (USD~$30$--$70$ per alert, LexisNexis~2024~\cite{lexisnexis2024costukfc}). Inference compute is therefore not the economic constraint on adoption; investigator capacity is.
 
 \subsection{Audit artefacts for SS1/23 and OSFI E-23}
 
@@ -703,7 +738,7 @@ The following deviations from the March project proposal occurred during impleme
 
 The chapter reports the six-condition benchmark introduced in Chapter~\ref{ch:method}: three aggregators (centralised, FedAvg, FLoRA) crossed with two retrieval modes (flat, RAG), ten federation rounds per condition, three bank clients per round. The reading flow is intentionally linear so that a reader who has not seen the architecture before still leaves the chapter able to answer the four questions that drive the rest of the dissertation.
 
-\textit{What was measured?} Section~\ref{sec:results:setup} states the experimental setup and defines the three evaluation criteria (F1 score, communication volume plus per-stage wall-clock, membership-inference AUC) so that the figures and tables that follow are unambiguous.
+\textit{What was measured?} Section~\ref{sec:meth:config} (Methodology) states the experimental configuration and defines the three evaluation criteria (F1 score, communication volume plus per-stage wall-clock, membership-inference AUC).
 
 \textit{Where do the trilemma axes land?} Sections~\ref{sec:results:utility}, \ref{sec:results:efficiency}, and~\ref{sec:results:privacy} report one axis each, in the order utility-then-efficiency-then-privacy that mirrors the dissertation's headline argument.
 
@@ -711,31 +746,9 @@ The chapter reports the six-condition benchmark introduced in Chapter~\ref{ch:me
 
 \textit{What does this cost in operations?} Section~\ref{sec:results:cost} translates the F1 score into projected investigator workload and dollar cost per million transactions, reading the trilemma in the units that matter to a deployment.
 
-The chapter closes in Section~\ref{sec:results:limits} with a self-audit of the limitations of the evaluation, which the conclusions chapter then picks up as future-work items. The order of presentation is deliberate: a reader who screens only the section headings still sees the chapter argue that the FLoRA-with-RAG configuration meets every acceptance condition stated in Section~\ref{sec:results:eval-criteria}, that the retrieval mode contributes a measurable lift in peak F1 score, and that the operational cost of the configuration is dominated by alert investigation rather than by training compute.
+The chapter closes in Section~\ref{sec:results:limits} with a self-audit of the limitations of the evaluation, which the conclusions chapter then picks up as future-work items.
 
 Every figure is produced from the archived JSON files at git tag \texttt{benchmark-2026-04-02} by the figure-generation scripts in the public repository (\url{https://github.com/SlaviXG/thinking-inside-the-box}), and is reproducible from the pinned commit \texttt{01a6cce}. Numerical claims in the prose, including the cost projections of Section~\ref{sec:results:cost} and the production-deployment figures cross-referenced from Chapter~\ref{ch:method}, are re-derived independently by the verification scripts in the public repository.
-
-\section{Experimental Setup}
-\label{sec:results:setup}
-
-\subsection{Configuration shared across all six runs}
-
-All six runs share the same backbone (DeepSeek-R1-Distill-Llama-8B at 4-bit NF4), the same LoRA configuration ($r=8$, $\alpha=16$, targets \texttt{q\_proj}+\texttt{v\_proj}), the same optimiser (AdamW, learning rate $2 \times 10^{-4}$, batch size one), and the same per-round budget (100 balanced training samples, full stratified test split evaluation, 50 members and 50 non-members for MIA), as summarised in Table~\ref{tab:config-summary}. They differ only in the aggregation strategy and the retrieval mode. Every run is ten rounds long and distributes three clients across the IBM AML partitions for banks 20, 11, and 12.
-
-\input{res/tab-config-summary}
-
-\subsection{Evaluation criteria}
-\label{sec:results:eval-criteria}
-
-Three evaluation criteria are reported, one per axis of the trilemma. All three are computed per round per client and aggregated across clients for the figures in this chapter; the per-client values are also retained in the archived JSON for downstream inspection.
-
-\textit{Utility: F1 score.} The F1 score~\cite{10.3115/1072064.1072067} is the harmonic mean of precision $P = \mathrm{TP}/(\mathrm{TP}+\mathrm{FP})$ and recall $R = \mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$ on the binary suspicious-account label, computed as $\mathrm{F1} = 2PR/(P+R)$. The choice of F1 score over plain accuracy is motivated by the dataset's class imbalance: the IBM AML positive-class rate is $1.5\%$, so a constant ``clean'' classifier would achieve $98.5\%$ accuracy and $0$ F1 score. F1 score weights false positives and false negatives equally; the cost analysis in Section~\ref{sec:results:cost} re-weights these for the operational case.
-
-\textit{Efficiency: communication volume and per-stage wall-clock.} Communication volume is reported as bytes transferred per client per round. The FLoRA payload is the size of the Fernet-wrapped adapter delta as produced by the encryption module; the FedAvg reference is the McMahan formulation, which broadcasts the full backbone parameters at fp16. Wall-clock latency is reported per round, decomposed into the fit, evaluate, MIA, and aggregation stages. Each stage is timed inside the federated client loop using \texttt{time.perf\_counter} and persisted to the per-round JSON.
-
-\textit{Privacy: membership-inference AUC.} The privacy probe is a threshold-based membership-inference attacker. For each client and each round, the client computes the per-token language-modelling loss against $50$ training-set accounts (members) and $50$ test-set accounts (non-members). The Receiver Operating Characteristic Area Under the Curve (ROC AUC) of an attacker that classifies an account as ``member'' when its loss is below a threshold is reported as the privacy metric. An AUC of $0.5$ corresponds to an attacker that cannot do better than chance; values above $0.5$ indicate leakage. The proxy is conservative by construction (a stronger shadow-model attacker may recover more); the limitation is acknowledged in Section~\ref{sec:results:limits}.
-
-\textit{Acceptance condition.} For each axis the dissertation states the acceptance condition that an architecture must meet to be operationally interesting in this setting. Utility: F1 score within $0.10$ of the centralised-flat upper bound. Efficiency: per-client per-round payload at least two orders of magnitude below the McMahan fp16 reference. Privacy: membership-inference AUC within $\pm 0.10$ of the chance baseline. The reported FLoRA-with-RAG configuration satisfies all three.
 
 \section{Utility: F1 Score Across Conditions}
 \label{sec:results:utility}
