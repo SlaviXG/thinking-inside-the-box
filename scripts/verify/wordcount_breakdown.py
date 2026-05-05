@@ -73,10 +73,22 @@ def main() -> int:
     acronyms_start = landmarks.get("acronyms_start", intro)
     abs_start = landmarks["abstract_start"]
     abs_end_inclusive = landmarks["abstract_end"] + 1
-    exec_start = landmarks.get("exec_start", abs_start)
+    exec_start = landmarks.get("exec_start")
+
+    # The executive summary lives either in the front matter (before the
+    # abstract) or at the end of Chapter 5 (after the closing reflection).
+    # If it sits within Chapter 5, the chapter's word count already covers
+    # it; we still report its size for visibility.
+    if exec_start is not None and exec_start < abs_start:
+        exec_in_front = True
+    else:
+        exec_in_front = False
 
     print("Per-section word counts:")
-    exec_n  = slice_count(exec_start, abs_start, "Executive Summary")
+    if exec_in_front:
+        exec_n = slice_count(exec_start, abs_start, "Executive Summary (front matter)")
+    else:
+        exec_n = 0
     abs_n   = slice_count(abs_start, abs_end_inclusive, "Abstract")
     acro_n  = slice_count(acronyms_start, intro, "List of Acronyms (table)")
     intro_n = slice_count(intro, landmarks["bg"], "Chapter 1 Introduction")
@@ -84,10 +96,16 @@ def main() -> int:
     meth_n  = slice_count(landmarks["method"], landmarks["results"], "Chapter 3 Methodology")
     res_n   = slice_count(landmarks["results"], landmarks["concl"], "Chapter 4 Results and Evaluation")
     con_n   = slice_count(landmarks["concl"], body_end, "Chapter 5 Conclusions")
+    if not exec_in_front and exec_start is not None and exec_start < body_end:
+        # Sub-count: portion of Chapter 5 that is the executive summary.
+        exec_n_subcount = count_words(
+            "\n".join(lines[exec_start:body_end])
+        )
+        print(f"    of which Executive Summary (in Ch.~5): "
+              f"{'':10s} L{exec_start + 1:5d}..{body_end:5d}  {exec_n_subcount:6d} words")
     if appendix is not None:
-        app_n = slice_count(appendix, bibl, "Appendix (excluded from totals)")
+        slice_count(appendix, bibl, "Appendix (excluded from totals)")
     else:
-        app_n = 0
         print("  (no \\appendix directive found)")
     print()
 
@@ -95,9 +113,9 @@ def main() -> int:
     body_with_acronyms = exec_n + abs_n + acro_n + chapters
     body_without_acronyms = exec_n + abs_n + chapters
     print("Totals (excluding title page, bibliography, and appendix):")
-    print(f"  Executive Summary + Abstract + 5 Chapters + Acronym table : {body_with_acronyms:6d} words")
-    print(f"  Executive Summary + Abstract + 5 Chapters (no acronyms)   : {body_without_acronyms:6d} words")
-    print(f"  Five chapters only (no exec summary, abstract, acronyms)  : {chapters:6d} words")
+    print(f"  Abstract + Acronyms + 5 Chapters: {body_with_acronyms:6d} words")
+    print(f"  Abstract + 5 Chapters (no acronyms): {body_without_acronyms:6d} words")
+    print(f"  Five chapters only (no abstract, no acronyms): {chapters:6d} words")
     return 0
 
 

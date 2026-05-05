@@ -28,7 +28,7 @@
 
 \title{Thinking Inside the Box: Efficient Privacy-First Architecture for Distributed Reasoning using Federated Large Language Models}
 \author{Viacheslav Horbanov, CSC3094 Major Project and Dissertation in Computer Science}
-\date{April 22, 2026, Newcastle University}
+\date{May 2026, Newcastle University}
 
 \begin{document}
 
@@ -41,29 +41,6 @@
 
 
 \maketitle
-
-\section*{Executive Summary}
-\addcontentsline{toc}{section}{Executive Summary}
-
-\textbf{Problem.} Cross-silo institutions in regulated domains (banking, healthcare, legal) need to learn jointly from data that they cannot legally pool. Classical federated learning at LLM scale fails on bandwidth (approximately $16$~GB per client per round at fp16 for an 8-billion-parameter backbone) and silently degrades on utility when the silo-specific knowledge that drives the supervised task lives only in one institution.
-
-\textbf{Architectural premise.} The Privacy-Utility-Efficiency Trilemma is not intrinsic to federated LLMs; it is a property of co-locating reasoning capacity and sensitive knowledge inside the same learnable parameters. Once the two are separated, reasoning lives in a shared low-rank adapter (FLoRA) and crosses the network; knowledge lives in a per-node graph store and never does.
-
-\textbf{Three headline numbers, all reproducible from \texttt{benchmark-2026-04-02}.}
-\begin{itemize}
-    \setlength\itemsep{0em}
-    \item \textbf{Utility.} FLoRA-with-RAG peaks at F1 score~$=0.805$, within $0.05$ of the centralised-flat upper bound of $0.852$, and is the closest federated approximation of the centralised utility ceiling in the six-condition benchmark.
-    \item \textbf{Efficiency.} FLoRA's per-client per-round payload of $18.2$~MB is $882\times$ smaller than the McMahan-style fp16 reference. At a $100$~Mbps WAN link the per-round upload is $1.46$~seconds, while the per-round fit stage is $770$~seconds; bandwidth ceases to be a deployment constraint.
-    \item \textbf{Privacy.} Membership-inference AUC stays in the $0.44$-$0.45$ band against a chance baseline of $0.50$ across every federated condition.
-\end{itemize}
-
-\textbf{Three contributions.} (1) The composition of FLoRA adapter federation with a bank-scoped local RAG retriever, evaluated end-to-end on the IBM AML task; (2) a Strategy-pattern graph layer (\texttt{KuzuGraphStore}, \texttt{NetworkXGraphStore}, \texttt{Neo4jGraphStore}) that lets the federation and RAG layers swap backends without code change; (3) a reproducible per-round per-client benchmark archive under git tag \texttt{benchmark-2026-04-02} that operationalises the audit trail expected by the UK and Canadian model-risk regimes (PRA SS1/23 and OSFI Guideline E-23).
-
-\textbf{Three limitations stated up front.} The benchmark is single-seed; the privacy probe is a threshold-based proxy not a shadow-model attack; the IBM AML dataset is synthetic and cost projections inherit its class distribution. Each is treated explicitly in Section~\ref{sec:results:limits}.
-
-\textbf{Cost of running it.} A full ten-round three-client federated training session consumes $6.42$~A100-hours; at on-demand A100 cloud pricing this is between USD~$6.87$ and USD~$26.25$ per session, or approximately USD~$357$-$1{,}365$ per consortium per year at a weekly retraining cadence. Compute is not the constraint on adoption.
-
-\textbf{Reusability.} The architecture makes no assumptions about the underlying domain; the AML case is a study, not a specialisation. The same federation-plus-local-RAG pipeline retargets to healthcare, legal discovery, inter-hospital research, and cross-jurisdiction compliance by replacing only the ingestion layer and the retrieval-time prompt. The regulatory framing in Section~\ref{sec:meth:regulatory} is presented in the AML setting but applies, with the appropriate sector-specific instruments substituted in, to any of the above domains.
 
 \begin{abstract}
 \textbf{Problem and context.} Federated Learning (FL) was introduced to let institutions train shared machine learning models on data that they cannot legally pool: hospitals on patient records, banks on customer transactions, courts on case archives. Recent reasoning-capable Large Language Models (LLMs) have parameter counts of order $10^{10}$, which classical Federated Averaging (FedAvg) cannot transmit at acceptable cost; the literature formalises this as a Privacy-Utility-Efficiency Trilemma in which strengthening any one axis is paid for on the other two. The Anti-Money Laundering (AML) task is a natural test bed because the analytic signal sits in graph-structured transactions that span institutions, while privacy regulation forbids those institutions from pooling the data.
@@ -92,7 +69,7 @@ The dissertation introduces each acronym in full on first use; subsequent occurr
 AML & Anti-Money Laundering \\
 AUC & Area Under the (ROC) Curve \\
 CDD & Customer Due Diligence \\
-F1 score & Harmonic mean of precision and recall (the binary classification metric named ``F1''; not Formula 1 motorsport) \\
+F1 score & Harmonic mean of precision and recall, the binary classification metric \\
 FATF & Financial Action Task Force \\
 FCA & Financial Conduct Authority (United Kingdom) \\
 FedAvg & Federated Averaging \\
@@ -104,6 +81,7 @@ FLoRA & Federated Low-Rank Adaptation \\
 fp16, fp32 & 16-bit and 32-bit IEEE-754 floating-point precision \\
 GB, MB, Mbps & gigabytes, megabytes, megabits per second \\
 GDPR & General Data Protection Regulation (Regulation (EU) 2016/679) \\
+HIPAA & Health Insurance Portability and Accountability Act (US, 1996; federal healthcare data privacy law used here as the prototype domain-specific privacy statute) \\
 HSM & Hardware Security Module \\
 IBM AML & The Weber et al.~synthetic Anti-Money Laundering transaction dataset \\
 IID & Independent and Identically Distributed \\
@@ -320,7 +298,7 @@ The requirements below were derived directly from the five SMART objectives stat
 \section{Regulatory Framing}
 \label{sec:meth:regulatory}
 
-The architecture is presented in this dissertation under the AML case study, but the regulatory regimes against which it is justified here apply, with appropriate substitution of the sector-specific instruments, to any domain in which a federation of institutions must collaborate on inference without pooling raw records: cross-hospital clinical research under HIPAA or its national equivalents, inter-firm legal-discovery pipelines, and cross-jurisdiction tax compliance among them. The architecture is therefore not specialised to any one regime. The following five subsections name the five regulatory regimes most directly relevant to the AML deployment case, and tie each to a specific design decision elsewhere in this chapter.
+The architecture is presented in this dissertation under the AML case study, but the regulatory regimes against which it is justified here apply, with appropriate substitution of the sector-specific instruments, to any domain in which a federation of institutions must collaborate on inference without pooling raw records: cross-hospital clinical research under the Health Insurance Portability and Accountability Act (HIPAA) or its national equivalents, inter-firm legal-discovery pipelines, and cross-jurisdiction tax compliance among them. The architecture is therefore not specialised to any one regime. The following five subsections name the five regulatory regimes most directly relevant to the AML deployment case, and tie each to a specific design decision elsewhere in this chapter.
 
 \subsection{Data protection by design (GDPR Article 25; data minimisation under Article 5(1)(c))}
 
@@ -368,7 +346,7 @@ Table~\ref{tab:regulatory-compliance} summarises the relationship between each r
 \midrule
 GDPR Art.~5(1)(c)~\cite{gdpr2016} & Data minimisation: process only personal data necessary for the purpose & Privacy boundary: only encrypted adapter deltas leave a node; raw transactions and account identifiers never traverse the federation path & Met by design \\
 \addlinespace
-GDPR Art.~25~\cite{gdpr2016} & Data protection by design and by default: technical measures integrating data-protection principles into processing itself & Module layout segregates raw-data access (\texttt{src/data/}, \texttt{src/graph/}) from the federation path (\texttt{src/federation/}); the default is non-disclosure & Met by design \\
+GDPR Art.~25~\cite{gdpr2016} & Data protection by design and by default: technical measures integrating data-protection principles into processing itself & Module layout segregates raw-data access (data ingestion and graph store modules) from the federation path (the federation module); the default is non-disclosure & Met by design \\
 \addlinespace
 GDPR Art.~22~\cite{gdpr2016} & Right not to be subject to a decision based solely on automated processing & Verdict-first target format positions the LLM output as triage input to a human investigator; STR generation remains a human decision & Architecturally aligned (out of scope as a runtime guarantee) \\
 \addlinespace
@@ -415,16 +393,16 @@ This decoupling is the central contribution of the architecture, and it dictates
 
 \subsection{Module layout}
 
-The Python package \texttt{src/} is organised into six top-level modules, each with a single responsibility.
+The codebase is organised into six top-level modules, each with a single responsibility.
 
 \begin{itemize}
     \setlength\itemsep{0em}
-    \item \texttt{src/data/} ingests the IBM AML CSV, partitions it by originating bank, and produces stratified 70/15/15 train/validation/test splits per partition.
-    \item \texttt{src/graph/} contains the \texttt{GraphStore} abstract interface, three concrete backends (Kuzu, NetworkX, Neo4j), a factory, and the bank-scoped pattern detection module.
-    \item \texttt{src/model/} loads the DeepSeek-R1-Distill-Llama-8B backbone under 4-bit QLoRA quantisation and attaches the LoRA adapter.
-    \item \texttt{src/pipeline/} assembles the prompt for a target account, runs greedy generation against the adapted model, and parses the verdict from the model's reply.
-    \item \texttt{src/federation/} contains the in-process federated client (fit, evaluate, MIA, with a Flower-compatible interface), the aggregation strategies (FLoRA and FedAvg), and the centralised baseline runner.
-    \item \texttt{src/security/} implements the symmetric encryption wrapper used to protect adapter deltas in transit.
+    \item The data ingestion module ingests the IBM AML CSV, partitions it by originating bank, and produces stratified 70/15/15 train/validation/test splits per partition.
+    \item The graph module contains the \texttt{GraphStore} abstract interface, three concrete backends (Kuzu, NetworkX, Neo4j), a factory, and the bank-scoped pattern detection module.
+    \item The model module loads the DeepSeek-R1-Distill-Llama-8B backbone under 4-bit QLoRA quantisation and attaches the LoRA adapter.
+    \item The pipeline module assembles the prompt for a target account, runs greedy generation against the adapted model, and parses the verdict from the model's reply.
+    \item The federation module contains the in-process federated client (fit, evaluate, MIA, with a Flower-compatible interface), the aggregation strategies (FLoRA and FedAvg), and the centralised baseline runner.
+    \item The security module implements the symmetric encryption wrapper used to protect adapter deltas in transit.
 \end{itemize}
 
 The federation layer depends only on abstract interfaces from the graph and pipeline layers; it has no awareness of which concrete graph backend is in use, nor of the specifics of AML pattern detection. This satisfies F1 (domain agnosticism) and N5 (separation of concerns). The end-to-end system is shown in Figure~\ref{fig:arch-system}.
@@ -441,7 +419,7 @@ The federation layer depends only on abstract interfaces from the graph and pipe
 
 The graph layer is the most substantial design decision in the project. It uses the Strategy pattern~\cite{gof1994} to achieve F2 (pluggable backends), and it is intentionally the only place in the codebase where a concrete database technology is named: every other layer talks to the abstract \texttt{GraphStore} interface, so swapping the backend is a localised change.
 
-\texttt{src/graph/base.py} defines an abstract \texttt{GraphStore} interface with four operations: \texttt{ingest(transactions)}, \texttt{retrieve\_context(account\_id, mode)}, \texttt{structural\_signals(account\_id)}, and \texttt{close()}. Three concrete classes implement this interface:
+The graph module defines an abstract \texttt{GraphStore} interface with four operations: \texttt{ingest(transactions)}, \texttt{retrieve\_context(account\_id, mode)}, \texttt{structural\_signals(account\_id)}, and \texttt{close()}. Three concrete classes implement this interface:
 
 \begin{itemize}
     \setlength\itemsep{0em}
@@ -450,7 +428,7 @@ The graph layer is the most substantial design decision in the project. It uses 
     \item \texttt{Neo4jGraphStore} is provided for real distributed deployments where multiple processes on one node might share a single graph store, or where Cypher-based external tooling is desired.
 \end{itemize}
 
-A factory function in \texttt{src/graph/factory.py} selects the concrete backend based on a single \texttt{Config.graph\_backend} string. The federation and RAG layers depend only on the abstract interface; they will continue to work if a new backend (for example, TigerGraph or ArangoDB) is added later. Figure~\ref{fig:arch-strategy-pattern} shows the resulting class structure. This is exactly the kind of structural adaptability called for by the project instruction that the architecture must be reusable in practice beyond the dissertation.
+A factory function selects the concrete backend based on a single \texttt{Config.graph\_backend} string. The federation and RAG layers depend only on the abstract interface; they will continue to work if a new backend (for example, TigerGraph or ArangoDB) is added later. Figure~\ref{fig:arch-strategy-pattern} shows the resulting class structure. This is exactly the kind of structural adaptability called for by the project instruction that the architecture must be reusable in practice beyond the dissertation.
 
 \begin{figure}[t]
     \centering
@@ -493,7 +471,7 @@ The base model is frozen throughout training; only the adapter parameters receiv
 
 \subsection{Data ingestion and partitioning}
 
-\texttt{src/data/aml\_ingestor.py} reads the IBM AML CSV~\cite{weber2018scalablegraphlearningantimoney} and emits account-level records annotated with the ground-truth laundering label. Partitioning by \texttt{From Bank} yields three natural cross-silo partitions, corresponding to banks with identifiers 20, 11, and 12 in the small-scale release of the dataset; these are the top three banks in the dataset by suspicious-account count (66, 64, and 36 respectively, against 26 for the fourth-ranked bank) and therefore the only partitions large enough to support the 50-member / 50-non-member MIA sampling and the balanced training mini-batches described below. For each partition the ingestor computes a stratified 70/15/15 train/validation/test split, preserving the (highly imbalanced) laundering rate of approximately 1-2 per cent in every split. The training, validation, and test partitions are materialised as disjoint Kuzu databases under \texttt{data/kuzu\_dbs/}, so that retrieval queries at evaluation time cannot leak training transactions into the test prompt.
+The data ingestion module reads the IBM AML CSV~\cite{weber2018scalablegraphlearningantimoney} and emits account-level records annotated with the ground-truth laundering label. Partitioning by \texttt{From Bank} yields three natural cross-silo partitions, corresponding to banks with identifiers 20, 11, and 12 in the small-scale release of the dataset; these are the top three banks in the dataset by suspicious-account count (66, 64, and 36 respectively, against 26 for the fourth-ranked bank) and therefore the only partitions large enough to support the 50-member / 50-non-member MIA sampling and the balanced training mini-batches described below. For each partition the ingestor computes a stratified 70/15/15 train/validation/test split, preserving the (highly imbalanced) laundering rate of approximately 1-2 per cent in every split. The training, validation, and test partitions are materialised as disjoint Kuzu databases, so that retrieval queries at evaluation time cannot leak training transactions into the test prompt.
 
 \subsection{Graph backends}
 
@@ -506,7 +484,7 @@ The \texttt{Neo4jGraphStore} backend speaks Cypher against a local Neo4j server.
 \subsection{Bank-scoped pattern detection}
 \label{sec:meth:impl:patterns}
 
-The module \texttt{src/graph/patterns.py} translates structural graph queries into named, LLM-digestible AML typologies. Five patterns are detected:
+The bank-scoped pattern detection module translates structural graph queries into named, LLM-digestible AML typologies. Five patterns are detected:
 
 \begin{itemize}
     \setlength\itemsep{0em}
@@ -542,7 +520,7 @@ Both modes share the same backbone, the same system prompt (which instructs the 
 
 \subsection{Federation client}
 
-\texttt{src/federation/client.py} implements an in-process federated client (mirroring Flower's client interface but not using the Flower runtime, for the reasons described in Section~\ref{sec:bg:fl}) whose \texttt{fit} step is responsible for one local epoch of training, and whose \texttt{evaluate} step is responsible for both the utility metric and the membership inference AUC.
+The federation client module implements an in-process federated client (mirroring Flower's client interface but not using the Flower runtime, for the reasons described in Section~\ref{sec:bg:fl}) whose \texttt{fit} step is responsible for one local epoch of training, and whose \texttt{evaluate} step is responsible for both the utility metric and the membership inference AUC.
 
 Training uses AdamW with learning rate $2 \times 10^{-4}$ and a batch size of one, the latter imposed by the GPU memory budget of a single A100 instance that also holds the 4-bit backbone, the adapter, and the Kuzu database handle. Each round samples 100 accounts from the client's training partition, forced to a 50/50 suspicious/clean ratio through oversampling with replacement of the minority class (this step is necessary because the raw class imbalance of 1-2 per cent makes unbiased sampling produce rounds with zero positives). Evaluation runs against each client's full stratified test split, which after the 70/15/15 partitioning described above yields between 380 and 726 accounts per client (averaging 578 across the three banks in the benchmark); this is the most rigorous eval setting the pipeline supports and is preferred over a sub-sampled balanced eval for the reported benchmark. Gradient accumulation was considered but not enabled in the current benchmark, and is identified as a future-work item in Chapter~\ref{ch:conclusions}.
 
@@ -557,7 +535,7 @@ At training time, loss is computed only on the response tokens; prompt tokens ha
 
 \subsection{Aggregators}
 
-Three aggregation strategies are implemented in \texttt{src/federation/}:
+Three aggregation strategies are implemented in the federation module:
 
 \begin{itemize}
     \setlength\itemsep{0em}
@@ -579,12 +557,12 @@ This proxy is explicitly acknowledged in Chapter~\ref{ch:results} as one of many
 
 \subsection{Configuration and observability}
 
-All experimental parameters live in a single \texttt{Config} dataclass (\texttt{src/config.py}), which is serialised to \texttt{config\_<run\_name>.json} at the start of every run. Per-round metrics (training loss, F1 score, precision, recall, MIA AUC, and the wall-clock latencies of the fit, evaluate, and aggregate stages) are appended to \texttt{history\_<run\_name>.json} after each round. A run can therefore be fully reproduced by pairing an archived config with the code state at the corresponding git tag.
+All experimental parameters live in a single \texttt{Config} dataclass, which is serialised to \texttt{config\_<run\_name>.json} at the start of every run. Per-round metrics (training loss, F1 score, precision, recall, MIA AUC, and the wall-clock latencies of the fit, evaluate, and aggregate stages) are appended to \texttt{history\_<run\_name>.json} after each round. A run can therefore be fully reproduced by pairing an archived config with the code state at the corresponding git tag.
 
 \section{Path to Production Deployment}
 \label{sec:meth:production}
 
-The benchmark in Chapter~\ref{ch:results} is a single-GPU simulation. This section translates the simulation's measurements into the figures a deployment engineer would need in order to put the architecture into a real cross-silo consortium: bandwidth on a real WAN link, GPU-hour budget under typical cloud pricing, the audit artefacts the model-risk regimes of Section~\ref{sec:meth:regulatory} require, and the operational concerns (key management, rollback) that the simulation deliberately abstracts away. All numerical values reported in this section are produced by \texttt{scripts/verify/verify\_production\_deployment.py}; the dissertation cites the script's outputs.
+The benchmark in Chapter~\ref{ch:results} is a single-GPU simulation. This section translates the simulation's measurements into the figures a deployment engineer would need in order to put the architecture into a real cross-silo consortium: bandwidth on a real WAN link, GPU-hour budget under typical cloud pricing, the audit artefacts the model-risk regimes of Section~\ref{sec:meth:regulatory} require, and the operational concerns (key management, rollback) that the simulation deliberately abstracts away. All numerical values reported in this section are produced by a dedicated verification script in the public repository; the dissertation cites the script's outputs.
 
 \subsection{Bandwidth on a real WAN}
 
@@ -600,7 +578,7 @@ Both UK and Canadian model-risk regimes (Section~\ref{sec:meth:regulatory}) requ
 
 \subsection{Key management and rollback}
 
-Two operational concerns that the simulation deliberately abstracts away and that a real deployment must address are recorded here for completeness and identified as out of scope for the dissertation's own evaluation. First, the Fernet symmetric key used by the encryption layer in \texttt{src/security/encryption.py} is a single shared secret in the simulation; a production deployment would manage one client-server key per institution, with rotation handled by an HSM-backed key-management service and re-encryption on rotation, with audit logs feeding the same observability stack as the per-round metrics. Second, the simulation has no rollback path: a regression in the global adapter would be carried into the next round. A production deployment would persist each round's global adapter as an immutable artefact, gate promotion on a held-out validation F1-score threshold, and revert to the prior adapter when promotion fails. Both extensions are routine engineering, and neither alters the architectural claims of this dissertation; they are mentioned here so that the simulation's scope is not mistaken for a deployment claim.
+Two operational concerns that the simulation deliberately abstracts away and that a real deployment must address are recorded here for completeness and identified as out of scope for the dissertation's own evaluation. First, the Fernet symmetric key used by the encryption layer is a single shared secret in the simulation; a production deployment would manage one client-server key per institution, with rotation handled by an HSM-backed key-management service and re-encryption on rotation, with audit logs feeding the same observability stack as the per-round metrics. Second, the simulation has no rollback path: a regression in the global adapter would be carried into the next round. A production deployment would persist each round's global adapter as an immutable artefact, gate promotion on a held-out validation F1 score threshold, and revert to the prior adapter when promotion fails. Both extensions are routine engineering, and neither alters the architectural claims of this dissertation; they are mentioned here so that the simulation's scope is not mistaken for a deployment claim.
 
 \section{Testing and Reproducibility}
 \label{sec:meth:testing}
@@ -611,11 +589,11 @@ The pattern detection module is verified by constructing small transaction graph
 
 \subsection{End-to-end smoke tests}
 
-The \texttt{scripts/} directory contains small helpers that exercise the federation loop for a single round against a miniature partition, to catch integration-level regressions between the data layer, the graph layer, and the model layer. These are not a substitute for a full benchmark run, but they reliably catch issues such as tokeniser-artefact regressions (for example, the \enquote{fast tokeniser produces Ġ/Ċ artefacts} problem that is guarded against by the \texttt{Config.use\_fast\_tokenizer=False} default).
+The repository contains small helper scripts that exercise the federation loop for a single round against a miniature partition, to catch integration-level regressions between the data layer, the graph layer, and the model layer. These are not a substitute for a full benchmark run, but they reliably catch issues such as tokeniser-artefact regressions (for example, the \enquote{fast tokeniser produces Ġ/Ċ artefacts} problem that is guarded against by the \texttt{Config.use\_fast\_tokenizer=False} default).
 
 \subsection{Benchmark reproducibility}
 
-The formal benchmark presented in Chapter~\ref{ch:results} was executed on 2~April~2026 and is archived in the project repository under \texttt{data/2026-04-02/}. Twelve JSON files are committed (six \texttt{config\_*.json}, six \texttt{history\_*.json}), corresponding to the six-condition cross of three aggregators and two retrieval modes. The exact code state that produced those numbers is pinned by the annotated git tag \texttt{benchmark-2026-04-02}, which points at commit \texttt{01a6cce}. A reviewer reproducing the results can therefore execute \texttt{git checkout benchmark-2026-04-02} and replay the notebook against the archived configurations.
+The formal benchmark presented in Chapter~\ref{ch:results} was executed on 2~April~2026 and is archived in the project repository. Twelve JSON files are committed (six \texttt{config\_*.json}, six \texttt{history\_*.json}), corresponding to the six-condition cross of three aggregators and two retrieval modes. The exact code state that produced those numbers is pinned by the annotated git tag \texttt{benchmark-2026-04-02}, which points at commit \texttt{01a6cce}. A reviewer reproducing the results can therefore execute \texttt{git checkout benchmark-2026-04-02} and replay the notebook against the archived configurations.
 
 \subsection{Limitations of the testing strategy}
 
@@ -675,7 +653,7 @@ The IBM AML dataset is synthetic and openly licensed~\cite{weber2018scalablegrap
 
 \subsection{Regulatory alignment}
 
-The architecture's relationship to the regulatory regimes governing the AML case study (GDPR Articles 5(1)(c) and 25, FATF Recommendations 10, 11 and 20, UK MLR 2017, USA PATRIOT Act \S~314(b), PRA SS1/23, OSFI Guideline E-23, and 6AMLD) is set out in Section~\ref{sec:meth:regulatory}, where each regulation is tied to the specific design decision that satisfies it. The summary point relevant to the ethics chapter is that no node transmits raw customer records: each node transmits only adapter deltas, which are (i) several orders of magnitude smaller than the underlying data, (ii) an arbitrary learned transformation of that data rather than a reversible encoding, and (iii) cryptographically protected in transit by the symmetric encryption layer in \texttt{src/security/encryption.py}.
+The architecture's relationship to the regulatory regimes governing the AML case study (GDPR Articles 5(1)(c) and 25, FATF Recommendations 10, 11 and 20, UK MLR 2017, USA PATRIOT Act \S~314(b), PRA SS1/23, OSFI Guideline E-23, and 6AMLD) is set out in Section~\ref{sec:meth:regulatory}, where each regulation is tied to the specific design decision that satisfies it. The summary point relevant to the ethics chapter is that no node transmits raw customer records: each node transmits only adapter deltas, which are (i) several orders of magnitude smaller than the underlying data, (ii) an arbitrary learned transformation of that data rather than a reversible encoding, and (iii) cryptographically protected in transit by the symmetric encryption layer.
 
 \subsection{Model bias}
 
@@ -703,7 +681,7 @@ The dissertation does not run a fairness audit against protected characteristics
 
 \subsection{Use of generative AI in the authoring process}
 
-Generative AI tooling (commercial LLM assistants) was used during the preparation of this dissertation to improve spelling, phrasing, grammar, and academic writing style, and to suggest figure layouts and table structures. All technical claims, numerical values, and regulatory citations were verified by the author against primary sources or against the verification scripts under \texttt{scripts/verify/}; the AI tooling did not generate experimental results, did not compute reported numbers, and did not produce the bibliography. The benchmark itself was executed by the author on a Colab A100 instance and is reproducible from the pinned git tag \texttt{benchmark-2026-04-02}.
+Generative AI tooling (commercial LLM assistants) was used during the preparation of this dissertation to improve spelling, phrasing, grammar, and academic writing style, and to suggest figure layouts and table structures. All technical claims, numerical values, and regulatory citations were verified by the author against primary sources or against the verification scripts in the public repository; the AI tooling did not generate experimental results, did not compute reported numbers, and did not produce the bibliography. The benchmark itself was executed by the author on a Colab A100 instance and is reproducible from the pinned git tag \texttt{benchmark-2026-04-02}.
 
 \section{Deviations from the Project Proposal}
 \label{sec:meth:deviations}
@@ -712,7 +690,7 @@ The following deviations from the March project proposal occurred during impleme
 
 \paragraph{Compute platform and federation substrate: T4 + Flower to A100 + in-process loop.} The proposal anticipated a Google Colab T4 accelerator at 16~GB VRAM and Flower's Virtual Client Engine as the simulation substrate. Flower's engine, however, schedules each client on a separate Ray worker process, and each worker pickles its own copy of the 8-billion-parameter backbone alongside the activations, gradient-checkpointing buffers, AdamW optimiser state, and KV cache that one fine-tuning round requires. Although the quantised backbone fits in approximately 6~GB at 4-bit NF4, three concurrent workers compound this footprint past the 40~GB A100 budget and trigger OOM. The project therefore made two deviations in tandem: (i) the simulation was re-implemented as a bespoke in-process loop that loads the base model once and shares it by reference across clients, keeping Flower's client interface as the design template; and (ii) the compute platform was migrated to a Colab A100 instance at 40~GB VRAM for simulation headroom. The architectural claim is unaffected: production deployments in which each bank has its own dedicated accelerator would not face the same simulation-specific constraint.
 
-\paragraph{Retrieval terminology, \enquote{graph} to \enquote{RAG}.} The proposal described the experimental axis as \enquote{flat versus graph}. During implementation it became clear that the relevant distinction is between flat prompts and retrieval-augmented prompts, not between flat prompts and a raw graph dump. The axis was therefore renamed to \enquote{flat versus RAG} in the dissertation's prose and in future configurations. The archived 2026-04 benchmark configurations retain the earlier \texttt{retrieval\_mode: "graph"} label for compatibility with the exported JSON files; the semantics are identical. The module path \texttt{src/graph/} and the \texttt{GraphStore} interface were deliberately not renamed, because they refer to the database abstraction, not to the retrieval axis.
+\paragraph{Retrieval terminology, \enquote{graph} to \enquote{RAG}.} The proposal described the experimental axis as \enquote{flat versus graph}. During implementation it became clear that the relevant distinction is between flat prompts and retrieval-augmented prompts, not between flat prompts and a raw graph dump. The axis was therefore renamed to \enquote{flat versus RAG} in the dissertation's prose and in future configurations. The archived 2026-04 benchmark configurations retain the earlier \texttt{retrieval\_mode: "graph"} label for compatibility with the exported JSON files; the semantics are identical. The graph module and the \texttt{GraphStore} interface were deliberately not renamed, because they refer to the database abstraction, not to the retrieval axis.
 
 \paragraph{Evaluation sample size.} The proposal did not commit to an evaluation sample size. Early smoke runs used a single account per client per round, which was sufficient for integration testing but would have produced too much round-to-round F1 score variance to support cross-condition claims. The benchmark presented in Chapter~\ref{ch:results} instead evaluates each client against its full stratified test split (between 380 and 726 accounts per client depending on the bank, averaging 578 across the three banks), which is the most rigorous option supported by the pipeline and which yields F1-score estimates whose round-to-round variance is well below the effect sizes separating the six conditions.
 
@@ -735,7 +713,7 @@ The chapter reports the six-condition benchmark introduced in Chapter~\ref{ch:me
 
 The chapter closes in Section~\ref{sec:results:limits} with a self-audit of the limitations of the evaluation, which the conclusions chapter then picks up as future-work items. The order of presentation is deliberate: a reader who screens only the section headings still sees the chapter argue that the FLoRA-with-RAG configuration meets every acceptance condition stated in Section~\ref{sec:results:eval-criteria}, that the retrieval mode contributes a measurable lift in peak F1 score, and that the operational cost of the configuration is dominated by alert investigation rather than by training compute.
 
-Every figure is produced from the archived JSON files under \texttt{data/2026-04-02/} by the scripts under \texttt{scripts/figures/}, and is reproducible from the pinned commit \texttt{01a6cce} (git tag \texttt{benchmark-2026-04-02}, repository \url{https://github.com/SlaviXG/thinking-inside-the-box}). Numerical claims in the prose, including the cost projections of Section~\ref{sec:results:cost} and the production-deployment figures cross-referenced from Chapter~\ref{ch:method}, are re-derived independently by the scripts under \texttt{scripts/verify/}.
+Every figure is produced from the archived JSON files at git tag \texttt{benchmark-2026-04-02} by the figure-generation scripts in the public repository (\url{https://github.com/SlaviXG/thinking-inside-the-box}), and is reproducible from the pinned commit \texttt{01a6cce}. Numerical claims in the prose, including the cost projections of Section~\ref{sec:results:cost} and the production-deployment figures cross-referenced from Chapter~\ref{ch:method}, are re-derived independently by the verification scripts in the public repository.
 
 \section{Experimental Setup}
 \label{sec:results:setup}
@@ -753,7 +731,7 @@ Three evaluation criteria are reported, one per axis of the trilemma. All three 
 
 \textit{Utility: F1 score.} The F1 score~\cite{10.3115/1072064.1072067} is the harmonic mean of precision $P = \mathrm{TP}/(\mathrm{TP}+\mathrm{FP})$ and recall $R = \mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$ on the binary suspicious-account label, computed as $\mathrm{F1} = 2PR/(P+R)$. The choice of F1 score over plain accuracy is motivated by the dataset's class imbalance: the IBM AML positive-class rate is $1.5\%$, so a constant ``clean'' classifier would achieve $98.5\%$ accuracy and $0$ F1 score. F1 score weights false positives and false negatives equally; the cost analysis in Section~\ref{sec:results:cost} re-weights these for the operational case.
 
-\textit{Efficiency: communication volume and per-stage wall-clock.} Communication volume is reported as bytes transferred per client per round. The FLoRA payload is the size of the Fernet-wrapped adapter delta as written to the wire by \texttt{src/security/encryption.py}; the FedAvg reference is the McMahan formulation, which broadcasts the full backbone parameters at fp16. Wall-clock latency is reported per round, decomposed into the fit, evaluate, MIA, and aggregation stages. Each stage is timed inside the federated client loop using \texttt{time.perf\_counter} and persisted to the per-round JSON.
+\textit{Efficiency: communication volume and per-stage wall-clock.} Communication volume is reported as bytes transferred per client per round. The FLoRA payload is the size of the Fernet-wrapped adapter delta as produced by the encryption module; the FedAvg reference is the McMahan formulation, which broadcasts the full backbone parameters at fp16. Wall-clock latency is reported per round, decomposed into the fit, evaluate, MIA, and aggregation stages. Each stage is timed inside the federated client loop using \texttt{time.perf\_counter} and persisted to the per-round JSON.
 
 \textit{Privacy: membership-inference AUC.} The privacy probe is a threshold-based membership-inference attacker. For each client and each round, the client computes the per-token language-modelling loss against $50$ training-set accounts (members) and $50$ test-set accounts (non-members). The Receiver Operating Characteristic Area Under the Curve (ROC AUC) of an attacker that classifies an account as ``member'' when its loss is below a threshold is reported as the privacy metric. An AUC of $0.5$ corresponds to an attacker that cannot do better than chance; values above $0.5$ indicate leakage. The proxy is conservative by construction (a stronger shadow-model attacker may recover more); the limitation is acknowledged in Section~\ref{sec:results:limits}.
 
@@ -853,13 +831,13 @@ Figure~\ref{fig:flat-vs-rag} pairs the peak and final F1 score of each aggregato
 \section{Operational Cost: Projecting the Trilemma onto Investigation Budgets}
 \label{sec:results:cost}
 
-The utility, efficiency, and privacy axes reported above are intrinsic measurements of the model. The operational consequence at deployment time is dominated by a different number: how many alerts an analyst has to investigate per period, and what fraction of those are false. AML investigations are widely reported to cost on the order of USD~30-70 per alert in the LexisNexis True Cost of Financial Crime Compliance series and aligned industry analyses, with 85-95\% of monitoring alerts ultimately resolving as false positives. This subsection projects the benchmark's measured precision and recall onto a reference monitoring volume of one million transactions, holding the dataset's empirical positive-class rate of 1.5\% fixed, so that the trilemma trade-offs can be read in investigator-budget units rather than F1-score units. The full computation is performed by \texttt{scripts/verify/verify\_cost\_of\_misclassification.py}; the dissertation reports its outputs.
+The utility, efficiency, and privacy axes reported above are intrinsic measurements of the model. The operational consequence at deployment time is dominated by a different number: how many alerts an analyst has to investigate per period, and what fraction of those are false. AML investigations are widely reported to cost on the order of USD~30-70 per alert in the LexisNexis True Cost of Financial Crime Compliance series and aligned industry analyses, with 85-95\% of monitoring alerts ultimately resolving as false positives. This subsection projects the benchmark's measured precision and recall onto a reference monitoring volume of one million transactions, holding the dataset's empirical positive-class rate of 1.5\% fixed, so that the trilemma trade-offs can be read in investigator-budget units rather than F1-score units. The full computation is performed by the cost-of-misclassification verification script in the public repository; the dissertation reports its outputs.
 
 The projection model is the simplest one consistent with a binary classifier whose precision and recall are known: at a positive-class rate $p_{\text{true}}$, monitored volume $V$, recall $R$, and precision $P$, the implied counts per period are $\text{TP} = V p_{\text{true}} R$, $\text{FP} = \text{TP}(1 - P)/P$, and $\text{FN} = V p_{\text{true}}(1 - R)$. The investigation cost upper bound is then $\text{FP} \times c_{\text{high}}$, where $c_{\text{high}} = 70$~USD per alert. Table~\ref{tab:results:cost} reports per-condition values at the peak F1 score round.
 
 \begin{table}[t]
 \centering
-\caption[Projected investigation cost per million transactions]{Projected operational cost per million monitored transactions, at the peak F1 score round of each condition. \texttt{FP/M} and \texttt{FN/M} are projected counts; \texttt{cost\_high} is the upper-bound investigation cost at USD~70 per alert. Source: \texttt{scripts/verify/verify\_cost\_of\_misclassification.py}.}
+\caption[Projected investigation cost per million transactions]{Projected operational cost per million monitored transactions, at the peak F1 score round of each condition. \texttt{FP/M} and \texttt{FN/M} are projected counts; \texttt{cost\_high} is the upper-bound investigation cost at USD~70 per alert. Source: cost-of-misclassification verification script in the public repository.}
 \label{tab:results:cost}
 \begin{tabular}{lcccccc}
 \toprule
@@ -920,7 +898,7 @@ Taken together, the benchmark results are the central piece of first-party evide
 \section{Research Contribution}
 \label{sec:concl:contribution}
 
-Beyond the benchmark itself, the dissertation contributes three artefacts that are intended to be reusable outside the financial setting studied here. First, the composition of FLoRA-style adapter federation with a bank-scoped local RAG retriever, evaluated on the IBM AML task, is the novel design principle that makes the trilemma decoupling possible: the low-rank adapter carries the generalisable reasoning signal across institutions, while the local graph retriever carries the silo-specific structural signal that would otherwise have to be pooled centrally. The two reasoning substrates are complementary, and the benchmark isolates the individual contribution of each. Second, the Strategy-pattern graph-store layer, with concrete Kuzu, NetworkX, and Neo4j backends and a Neo4j path that is production-deployable, is a minimal and directly reusable abstraction for any federated RAG project that needs to swap between embedded, in-memory, and distributed graph stores without touching the federation or RAG code. Third, the archived dataset of per-round per-client metrics under \texttt{data/2026-04-02/}, together with the pinned \texttt{benchmark-2026-04-02} tag and the figure-regeneration scripts under \texttt{scripts/figures/}, gives downstream researchers a drop-in reference against which to measure re-implementations, parameter sweeps, or alternative aggregators on the same task.
+Beyond the benchmark itself, the dissertation contributes three artefacts that are intended to be reusable outside the financial setting studied here. First, the composition of FLoRA-style adapter federation with a bank-scoped local RAG retriever, evaluated on the IBM AML task, is the novel design principle that makes the trilemma decoupling possible: the low-rank adapter carries the generalisable reasoning signal across institutions, while the local graph retriever carries the silo-specific structural signal that would otherwise have to be pooled centrally. The two reasoning substrates are complementary, and the benchmark isolates the individual contribution of each. Second, the Strategy-pattern graph-store layer, with concrete Kuzu, NetworkX, and Neo4j backends and a Neo4j path that is production-deployable, is a minimal and directly reusable abstraction for any federated RAG project that needs to swap between embedded, in-memory, and distributed graph stores without touching the federation or RAG code. Third, the archived dataset of per-round per-client metrics at the pinned \texttt{benchmark-2026-04-02} git tag, together with the figure-regeneration scripts in the public repository, gives downstream researchers a drop-in reference against which to measure re-implementations, parameter sweeps, or alternative aggregators on the same task.
 
 \subsection*{Where to find the evidence for each objective}
 
@@ -928,11 +906,11 @@ For the convenience of a reader auditing the project against its five SMART obje
 
 \begin{itemize}
     \setlength\itemsep{0em}
-    \item \textbf{OI (Architecture)} - the module layout (\texttt{src/data/}, \texttt{src/graph/}, \texttt{src/model/}, \texttt{src/pipeline/}, \texttt{src/federation/}, \texttt{src/security/}) and the Strategy-pattern graph layer are described in Section~\ref{sec:meth:arch} and Section~\ref{sec:meth:strategy}; the public repository is \url{https://github.com/SlaviXG/thinking-inside-the-box}.
+    \item \textbf{OI (Architecture)} - the six-module layout and the Strategy-pattern graph layer are described in Section~\ref{sec:meth:arch} and Section~\ref{sec:meth:strategy}; the public repository is \url{https://github.com/SlaviXG/thinking-inside-the-box}.
     \item \textbf{OII (Simulation)} - the cross-silo simulation, the in-process federated loop, and the deviation from Flower's Virtual Client Engine are described in Section~\ref{sec:meth:impl} and Section~\ref{sec:meth:deviations}; the configuration table is Table~\ref{tab:config-summary}.
-    \item \textbf{OIII (Benchmark)} - the six-condition matrix is reported in Chapter~\ref{ch:results}; the per-round JSON archive is under \texttt{data/2026-04-02/} at git tag \texttt{benchmark-2026-04-02} and is reproducible from the figure-regeneration scripts under \texttt{scripts/figures/}.
+    \item \textbf{OIII (Benchmark)} - the six-condition matrix is reported in Chapter~\ref{ch:results}; the per-round JSON archive at git tag \texttt{benchmark-2026-04-02} is reproducible from the figure-regeneration scripts in the public repository.
     \item \textbf{OIV (Trilemma measurement)} - utility (F1 score) is in Section~\ref{sec:results:utility}; efficiency (bytes and wall-clock) is in Section~\ref{sec:results:efficiency}; privacy (membership-inference AUC) is in Section~\ref{sec:results:privacy}. The trilemma summary is Table~\ref{tab:trilemma-summary}.
-    \item \textbf{OV (Evidence)} - the headline numbers for FLoRA-with-RAG (peak F1 score $0.805$ within $0.05$ of the centralised upper bound, $882\times$ bandwidth reduction, MIA AUC in the $0.44$-$0.45$ band) are reported in Sections~\ref{sec:results:utility}, \ref{sec:results:efficiency}, and~\ref{sec:results:privacy}, and re-derived independently by the verification scripts under \texttt{scripts/verify/} (\texttt{verify\_comms\_volume.py}, \texttt{verify\_cost\_of\_misclassification.py}, \texttt{verify\_production\_deployment.py}). The radar chart in Figure~\ref{fig:concept-objectives-radar} summarises the achievement against the five objectives at a glance.
+    \item \textbf{OV (Evidence)} - the headline numbers for FLoRA-with-RAG (peak F1 score $0.805$ within $0.05$ of the centralised upper bound, $882\times$ bandwidth reduction, MIA AUC in the $0.44$-$0.45$ band) are reported in Sections~\ref{sec:results:utility}, \ref{sec:results:efficiency}, and~\ref{sec:results:privacy}, and re-derived independently by the verification scripts in the public repository. The radar chart in Figure~\ref{fig:concept-objectives-radar} summarises the achievement against the five objectives at a glance.
 \end{itemize}
 
 \section{Future Work}
@@ -943,6 +921,30 @@ Three extensions are identified as natural follow-ups. First, the LoRA adapter c
 \section{Closing Reflection}
 
 The thesis behind this project is that the three trilemma axes - utility, efficiency, and privacy - can be decoupled in a federated LLM pipeline rather than traded against each other, provided the reasoning substrate is separated from the knowledge substrate and the federation boundary carries only low-rank adapter deltas. The benchmark reported in Chapter~\ref{ch:results} is consistent with that thesis at the scale of three banks, a single Colab A100, and a ten-round budget. The same architecture is directly reusable in any setting where data must stay with its owner and the owner's reasoning must nevertheless benefit from a shared model - healthcare, legal discovery, inter-hospital research, cross-jurisdiction compliance - and the reproducibility artefacts shipped with this dissertation are intended to make that reuse a matter of configuration rather than of re-implementation.
+
+\section*{Executive Summary}
+\label{sec:concl:exec-summary}
+\addcontentsline{toc}{section}{Executive Summary}
+
+\textbf{Problem.} Cross-silo institutions in regulated domains (banking, healthcare, legal) need to learn jointly from data that they cannot legally pool. Classical federated learning at LLM scale fails on bandwidth (approximately $16$~GB per client per round at fp16 for an 8-billion-parameter backbone) and silently degrades on utility when the silo-specific knowledge that drives the supervised task lives only in one institution.
+
+\textbf{Architectural premise.} The Privacy-Utility-Efficiency Trilemma is not intrinsic to federated LLMs; it is a property of co-locating reasoning capacity and sensitive knowledge inside the same learnable parameters. Once the two are separated, reasoning lives in a shared low-rank adapter (FLoRA) and crosses the network; knowledge lives in a per-node graph store and never does.
+
+\textbf{Three headline numbers, all reproducible from \texttt{benchmark-2026-04-02}.}
+\begin{itemize}
+    \setlength\itemsep{0em}
+    \item \textbf{Utility.} FLoRA-with-RAG peaks at F1 score~$=0.805$, within $0.05$ of the centralised-flat upper bound of $0.852$, and is the closest federated approximation of the centralised utility ceiling in the six-condition benchmark.
+    \item \textbf{Efficiency.} FLoRA's per-client per-round payload of $18.2$~MB is $882\times$ smaller than the McMahan-style fp16 reference. At a $100$~Mbps WAN link the per-round upload is $1.46$~seconds, while the per-round fit stage is $770$~seconds; bandwidth ceases to be a deployment constraint.
+    \item \textbf{Privacy.} Membership-inference AUC stays in the $0.44$-$0.45$ band against a chance baseline of $0.50$ across every federated condition.
+\end{itemize}
+
+\textbf{Three contributions.} (1) The composition of FLoRA adapter federation with a bank-scoped local RAG retriever, evaluated end-to-end on the IBM AML task; (2) a Strategy-pattern graph layer (\texttt{KuzuGraphStore}, \texttt{NetworkXGraphStore}, \texttt{Neo4jGraphStore}) that lets the federation and RAG layers swap backends without code change; (3) a reproducible per-round per-client benchmark archive under git tag \texttt{benchmark-2026-04-02} that operationalises the audit trail expected by the UK and Canadian model-risk regimes (PRA SS1/23 and OSFI Guideline E-23).
+
+\textbf{Three limitations stated up front.} The benchmark is single-seed; the privacy probe is a threshold-based proxy not a shadow-model attack; the IBM AML dataset is synthetic and cost projections inherit its class distribution. Each is treated explicitly in Section~\ref{sec:results:limits}.
+
+\textbf{Cost of running it.} A full ten-round three-client federated training session consumes $6.42$~A100-hours; at on-demand A100 cloud pricing this is between USD~$6.87$ and USD~$26.25$ per session, or approximately USD~$357$-$1{,}365$ per consortium per year at a weekly retraining cadence. Compute is not the constraint on adoption.
+
+\textbf{Reusability.} The architecture makes no assumptions about the underlying domain; the AML case is a study, not a specialisation. The same federation-plus-local-RAG pipeline retargets to healthcare, legal discovery, inter-hospital research, and cross-jurisdiction compliance by replacing only the ingestion layer and the retrieval-time prompt. The regulatory framing in Section~\ref{sec:meth:regulatory} is presented in the AML setting but applies, with the appropriate sector-specific instruments substituted in, to any of the above domains.
 
 % \section{Introduction}
 
