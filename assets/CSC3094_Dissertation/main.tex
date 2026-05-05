@@ -59,7 +59,7 @@
 \label{sec:acronyms}
 \addcontentsline{toc}{section}{List of Acronyms}
 
-The dissertation introduces each acronym in full on first use; subsequent occurrences use the bare acronym. The same expansions are listed here for the convenience of a reader who does not read in linear order.
+Each acronym is introduced in full on first use; this table collects them for quick reference.
 
 \begin{tabularx}{\textwidth}{l X}
 \toprule
@@ -249,28 +249,22 @@ The backbone model used in this project is the DeepSeek-R1-Distill-Llama-8B vari
 
 For the AML task itself, the IBM AML dataset of Weber et al.~\cite{weber2018scalablegraphlearningantimoney} provides a synthetic yet structurally realistic corpus of interbank transactions, partitioned by originating bank and annotated with account-level laundering labels. The synthetic provenance is both a strength and a limitation: it sidesteps the regulatory hurdles that would accompany real banking data and enables open, reproducible research, but it does not fully capture the adversarial creativity of real-world money launderers, whose strategies evolve to evade detection. The dataset's account-level labels align with the F1 score as the natural utility metric, following the evaluation tradition formalised in the MUC series~\cite{10.3115/1072064.1072067}.
 
-The conclusion of this section is that DeepSeek-R1-Distill-8B supplies a reasoning-capable backbone appropriate for the chain-of-thought investigative style required by AML triage, and the IBM AML dataset supplies a domain-appropriate, openly available benchmark. Together they satisfy the task-level requirements of the architecture whose design is detailed in the next chapter.
+DeepSeek-R1-Distill-8B supplies a reasoning-capable backbone suited to the chain-of-thought investigative style required by AML triage; the IBM AML dataset supplies a domain-appropriate, openly available benchmark against which that capability can be measured.
 
 
 \chapter{Methodology}
 \label{ch:method}
 
-\section*{Reader's orientation}
+\textit{Cross-silo Federated Learning} is the variant of FL in which a small number of well-identified, contractually bound institutions (banks, hospitals, law firms) each hold a partition of the data and want to learn a shared model without exchanging records. It is distinct from \textit{cross-device} FL, where the participants are millions of unidentified end-user devices. Cross-silo participants are usually assumed to follow the protocol and have substantial on-site compute; cross-device participants are usually assumed to be unreliable and intermittently connected.
 
-This chapter is written for a reader with general computer-science background and does not assume prior exposure to financial regulation, money-laundering investigation, or banking operations. Three terms reappear throughout and are worth fixing here so that they do not impede the rest of the chapter.
+\textit{Anti-Money Laundering (AML)} is the regulatory and analytic discipline by which financial institutions detect and report transactions consistent with money laundering or terrorist financing. The core computational task is binary classification on graph-structured data: each account is labelled \textit{clean} or \textit{suspicious}, and the analytic signal sits in the multi-hop transaction structure rather than in any individual transaction. Real banks file \textit{Suspicious Transaction Reports} (STRs) under FATF Recommendation~20 and its national transpositions; STR generation is treated here as a downstream consequence of correctly classifying suspicious accounts.
 
-\textit{Cross-silo Federated Learning} is the variant of FL in which a small number of well-identified, contractually bound institutions (banks, hospitals, law firms) each hold a partition of the data and want to learn a shared model without exchanging records. It is distinct from \textit{cross-device} FL, where the participants are millions of unidentified end-user devices (smartphones, browsers). The cross-silo setting is the right model for this dissertation because the AML deployment scenario has a few participants, all known to one another, all with substantial compute, and all under the same class of regulation. Cross-silo participants are usually assumed to follow the protocol; cross-device participants are usually assumed to be unreliable and possibly adversarial.
-
-\textit{Anti-Money Laundering (AML)} is the regulatory and analytic discipline by which financial institutions detect and report transactions consistent with money laundering or terrorist financing. From a computer-science angle the core task is binary classification on graph-structured data: each account is labelled \textit{clean} or \textit{suspicious}, and the analytic signal sits in the multi-hop transaction structure rather than in any individual transaction. Real banks file \textit{Suspicious Transaction Reports} (STRs) under FATF Recommendation~20 and its national transpositions; the dissertation treats STR generation as a downstream consequence of correctly classifying suspicious accounts.
-
-\textit{The privacy boundary} is the architectural construct that names which artefacts may leave a bank node and which may not. In the design that follows, raw transactions, account identifiers, graph queries, and any statistic computed over raw transactions remain inside the boundary. The only artefact that crosses it is an encrypted low-rank adapter weight delta. The boundary is enforced not by policy but by code structure: the modules with raw-data access do not appear in the federated communication path. This idea is doing the heavy lifting in the regulatory framing later in the chapter.
-
-The chapter then proceeds as follows. Section~\ref{sec:meth:requirements} formalises the requirements derived from the objectives stated in Chapter~\ref{ch:introduction}. Section~\ref{sec:meth:regulatory} maps the architecture to the regulatory regimes under which it would be deployed in the AML case study, and identifies which design decision satisfies which regulation. Section~\ref{sec:meth:arch} presents the system architecture and the design decisions that make it domain-agnostic. Section~\ref{sec:meth:impl} gives a component-by-component account of the implementation. Section~\ref{sec:meth:production} translates the benchmark numbers into deployment-time figures (WAN bandwidth, GPU-hour cost, audit artefacts). Section~\ref{sec:meth:testing} describes the testing and reproducibility strategy. Section~\ref{sec:meth:threat} states the threat model under which the privacy claims hold. Section~\ref{sec:meth:ethics} reports on ethical considerations. Section~\ref{sec:meth:deviations} documents deviations from the project proposal and the reasoning behind each.
+\textit{The privacy boundary} is the architectural construct that specifies which artefacts may leave a bank node. Raw transactions, account identifiers, graph queries, and any statistic derived from raw transactions remain inside the boundary. The only artefact that crosses it is an encrypted low-rank adapter weight delta. Critically, the boundary is enforced by code structure rather than policy: the modules with raw-data access are entirely absent from the federated communication path.
 
 \section{Requirements}
 \label{sec:meth:requirements}
 
-The requirements below were derived directly from the five SMART objectives stated in Section~\ref{ch:introduction}. Functional requirements describe what the system must do; non-functional requirements constrain how it must behave within the resources available to an undergraduate dissertation.
+The following requirements are derived from the five SMART objectives of Section~\ref{ch:introduction}.
 
 \subsection{Functional requirements}
 
@@ -298,7 +292,7 @@ The requirements below were derived directly from the five SMART objectives stat
 \section{Regulatory Framing}
 \label{sec:meth:regulatory}
 
-The architecture is presented in this dissertation under the AML case study, but the regulatory regimes against which it is justified here apply, with appropriate substitution of the sector-specific instruments, to any domain in which a federation of institutions must collaborate on inference without pooling raw records: cross-hospital clinical research under the Health Insurance Portability and Accountability Act (HIPAA) or its national equivalents, inter-firm legal-discovery pipelines, and cross-jurisdiction tax compliance among them. The architecture is therefore not specialised to any one regime. The following five subsections name the five regulatory regimes most directly relevant to the AML deployment case, and tie each to a specific design decision elsewhere in this chapter.
+The architecture is presented in this dissertation under the AML case study, but the regulatory regimes against which it is justified here apply, with appropriate substitution of the sector-specific instruments, to any domain in which a federation of institutions must collaborate on inference without pooling raw records: cross-hospital clinical research under the Health Insurance Portability and Accountability Act (HIPAA) or its national equivalents, inter-firm legal-discovery pipelines, and cross-jurisdiction tax compliance among them. The architecture is therefore not specialised to any one regime.
 
 \subsection{Data protection by design (GDPR Article 25; data minimisation under Article 5(1)(c))}
 
@@ -613,7 +607,7 @@ Both UK and Canadian model-risk regimes (Section~\ref{sec:meth:regulatory}) requ
 
 \subsection{Key management and rollback}
 
-Two operational concerns that the simulation deliberately abstracts away and that a real deployment must address are recorded here for completeness and identified as out of scope for the dissertation's own evaluation. First, the Fernet symmetric key used by the encryption layer is a single shared secret in the simulation; a production deployment would manage one client-server key per institution, with rotation handled by an HSM-backed key-management service and re-encryption on rotation, with audit logs feeding the same observability stack as the per-round metrics. Second, the simulation has no rollback path: a regression in the global adapter would be carried into the next round. A production deployment would persist each round's global adapter as an immutable artefact, gate promotion on a held-out validation F1 score threshold, and revert to the prior adapter when promotion fails. Both extensions are routine engineering, and neither alters the architectural claims of this dissertation; they are mentioned here so that the simulation's scope is not mistaken for a deployment claim.
+Two operational concerns fall outside the simulation's scope. First, the Fernet symmetric key used by the encryption layer is a single shared secret in the simulation; a production deployment would manage one client-server key per institution, with rotation handled by an HSM-backed key-management service and re-encryption on rotation, with audit logs feeding the same observability stack as the per-round metrics. Second, the simulation has no rollback path: a regression in the global adapter would be carried into the next round. A production deployment would persist each round's global adapter as an immutable artefact, gate promotion on a held-out validation F1 score threshold, and revert to the prior adapter when promotion fails. Both are routine engineering that does not alter the architectural claims.
 
 \section{Testing and Reproducibility}
 \label{sec:meth:testing}
@@ -637,7 +631,7 @@ Two limitations should be acknowledged. First, the benchmark was run once per co
 \section{Threat Model}
 \label{sec:meth:threat}
 
-The privacy claims made elsewhere in this chapter are claims against a specific class of adversary, not absolute claims. This section enumerates the adversaries the architecture is designed to resist, the capability assumed of each, the architectural defence, and the residual risk that survives the defence. The five adversaries below are the ones that a cross-silo deployment in the AML setting would expect to face; nothing in the architecture is designed against an active byzantine adversary, and that exclusion is stated as such.
+The privacy claims in this chapter are bounded by the adversary model below, not by it in absolute terms. The architecture is designed to resist five adversary classes representative of a cross-silo AML deployment; it offers no guarantees against an active byzantine adversary, and that exclusion is explicit.
 
 \subsection{Honest-but-curious aggregator}
 
@@ -736,7 +730,7 @@ The following deviations from the March project proposal occurred during impleme
 
 \section*{How to read this chapter}
 
-The chapter reports the six-condition benchmark introduced in Chapter~\ref{ch:method}: three aggregators (centralised, FedAvg, FLoRA) crossed with two retrieval modes (flat, RAG), ten federation rounds per condition, three bank clients per round. The reading flow is intentionally linear so that a reader who has not seen the architecture before still leaves the chapter able to answer the four questions that drive the rest of the dissertation.
+The chapter reports the six-condition benchmark from Chapter~\ref{ch:method}: three aggregators (centralised, FedAvg, FLoRA) crossed with two retrieval modes (flat, RAG), ten rounds per condition, three bank clients per round.
 
 \textit{What was measured?} Section~\ref{sec:meth:config} (Methodology) states the experimental configuration and defines the three evaluation criteria (F1 score, communication volume plus per-stage wall-clock, membership-inference AUC).
 
@@ -828,7 +822,7 @@ Figure~\ref{fig:mia-auc} plots the threshold-based MIA AUC per client per round 
 \section{Flat versus RAG: Ablation}
 \label{sec:results:ablation}
 
-Figure~\ref{fig:flat-vs-rag} pairs the peak and final F1 score of each aggregator under the two retrieval modes, isolating the contribution of the RAG context with every other pipeline variable held constant; Table~\ref{tab:ablation-flat-vs-rag} reports the underlying values together with the RAG-minus-flat delta on each axis. RAG lifts the peak F1 score of both federated aggregators ($+0.024$ for FedAvg and $+0.066$ for FLoRA) but leaves the centralised baseline essentially unchanged ($-0.007$), consistent with the view that RAG compensates for the smaller per-client compute budget under federation rather than adding information the centralised baseline does not already see. Final-round F1 score is more mixed: FedAvg gains the full RAG uplift ($0.643 \to 0.781$), centralised falls from $0.852$ to $0.632$ on the final round under RAG, and FLoRA-with-RAG's final-round drop relative to its own peak is large enough that flat retrieval finishes slightly higher than graph ($0.680$ versus $0.630$) - a round-to-round instability already visible in Figure~\ref{fig:f1-rounds}. The pattern suggests RAG is a reliable peak-F1-score lifter for federated training but does not, on its own, stabilise the final-round outcome, which is the reason both peak and final are reported throughout this chapter. Table~\ref{tab:trilemma-summary} consolidates the three trilemma axes into a single per-method view, putting the chapter's headline numbers next to each other so the utility, privacy, and efficiency outcomes of each method can be compared in one read.
+Figure~\ref{fig:flat-vs-rag} pairs the peak and final F1 score of each aggregator under the two retrieval modes, isolating the contribution of the RAG context with every other pipeline variable held constant; Table~\ref{tab:ablation-flat-vs-rag} reports the underlying values together with the RAG-minus-flat delta on each axis. RAG lifts the peak F1 score of both federated aggregators ($+0.024$ for FedAvg and $+0.066$ for FLoRA) but leaves the centralised baseline essentially unchanged ($-0.007$), consistent with the view that RAG compensates for the smaller per-client compute budget under federation rather than adding information the centralised baseline does not already see. Final-round F1 score is more mixed: FedAvg gains the full RAG uplift ($0.643 \to 0.781$), centralised falls from $0.852$ to $0.632$ on the final round under RAG, and FLoRA-with-RAG's final-round drop relative to its own peak is large enough that flat retrieval finishes slightly higher than graph ($0.680$ versus $0.630$) - a round-to-round instability already visible in Figure~\ref{fig:f1-rounds}. The pattern suggests RAG is a reliable peak-F1-score lifter for federated training but does not, on its own, stabilise the final-round outcome, which is the reason both peak and final are reported throughout this chapter. Table~\ref{tab:trilemma-summary} consolidates the three trilemma axes into a single per-method view.
 
 \input{res/tab-trilemma-summary}
 
@@ -915,7 +909,7 @@ Beyond the benchmark itself, the dissertation contributes three artefacts that a
 
 \subsection*{Where to find the evidence for each objective}
 
-For the convenience of a reader auditing the project against its five SMART objectives stated in Section~\ref{sec:meth:requirements}, this paragraph names the location of the supporting evidence for each.
+The supporting evidence for each SMART objective is located as follows.
 
 \begin{itemize}
     \setlength\itemsep{0em}
