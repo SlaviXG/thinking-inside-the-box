@@ -19,20 +19,20 @@ ORANGE = "#E07A1F"
 # Geometry constants. All figure positions derive from these so that the
 # privacy boundary, inner pipeline boxes, and arrow corridors stay in sync.
 PRIVACY_LEFT = 0.20
-PRIVACY_RIGHT = 7.05
+PRIVACY_RIGHT = 7.75
 PRIVACY_HALF_HEIGHT = 1.30
 
-BOX_W = 2.05
-BOX_H = 0.85
-IBM_X = 1.25
-KUZU_X = 3.55
-PROMPT_X = 5.85
-PROMPT_RIGHT = PROMPT_X + BOX_W / 2  # 6.875
+BOX_W = 2.25
+BOX_H = 1.05
+IBM_X = 1.50
+KUZU_X = 3.95
+PROMPT_X = 6.40
+PROMPT_RIGHT = PROMPT_X + BOX_W / 2  # 7.525
 
-GATHER_X = 7.95
-SERVER_X = 9.95
-SERVER_W = 2.80
-SERVER_LEFT = SERVER_X - SERVER_W / 2   # 8.575
+GATHER_X = 8.70
+SERVER_X = 10.70
+SERVER_W = 3.30
+SERVER_LEFT = SERVER_X - SERVER_W / 2   # 9.30
 SERVER_TOP = 4.00
 SERVER_BOT = 0.40
 SERVER_CY = (SERVER_TOP + SERVER_BOT) / 2
@@ -70,7 +70,7 @@ def _bank(ax, cy, bank_id, colour):
 
     _rounded(ax, (PROMPT_X, cy + 0.4), BOX_W, BOX_H, "#FDE8D4")
     ax.text(PROMPT_X, cy + 0.4, "Prompt + adapter\non DeepSeek 8B",
-            ha="center", va="center", fontsize=8.0, color="#7A3F0F")
+            ha="center", va="center", fontsize=8.5, color="#7A3F0F")
 
     fit_cx = (IBM_X + PROMPT_X) / 2
     fit_w = (PROMPT_X - IBM_X) + BOX_W * 0.4
@@ -89,7 +89,7 @@ def _bank(ax, cy, bank_id, colour):
 
 def main() -> None:
     apply_rc()
-    fig, ax = plt.subplots(figsize=(10.8, 6.6))
+    fig, ax = plt.subplots(figsize=(12.0, 6.6))
 
     bank_cys = (4.8, 2.2, -0.4)
     _bank(ax, bank_cys[0], 20, NAVY)
@@ -157,7 +157,7 @@ def main() -> None:
     ax.text(3.15, legend_y - 0.50, "broadcast global adapter (server to client)",
             ha="left", va="center", fontsize=8.5, color=SLATE)
 
-    ax.set_xlim(-0.2, 11.4)
+    ax.set_xlim(-0.2, 13.0)
     ax.set_ylim(-3.3, 6.4)
     ax.set_aspect("equal")
     ax.set_axis_off()
