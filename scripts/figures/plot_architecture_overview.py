@@ -55,35 +55,35 @@ def _bank(ax, cy, bank_id, colour):
         facecolor="#FFF4E8", edgecolor=ORANGE,
         linestyle="--", linewidth=1.4, alpha=0.45,
     ))
-    ax.text(PRIVACY_LEFT + 0.15, cy + 1.10, f"Bank {bank_id}: privacy boundary",
+    ax.text(PRIVACY_LEFT + 0.15, cy + 0.98, f"Bank {bank_id}: privacy boundary",
             fontsize=8.5, color="#B45A10", ha="left", fontweight="bold")
 
     # Pipeline trio. Box widths chosen so the longest label (the prompt box)
     # has ~0.18-unit padding on each side at fontsize 8.
-    _rounded(ax, (IBM_X, cy + 0.4), BOX_W, BOX_H, "#E8EEF7")
-    ax.text(IBM_X, cy + 0.4, "IBM AML\npartition", ha="center", va="center",
+    _rounded(ax, (IBM_X, cy + 0.28), BOX_W, BOX_H, "#E8EEF7")
+    ax.text(IBM_X, cy + 0.28, "IBM AML\npartition", ha="center", va="center",
             fontsize=8.5, color=NAVY)
 
-    _rounded(ax, (KUZU_X, cy + 0.4), BOX_W, BOX_H, "#E6F4F1")
-    ax.text(KUZU_X, cy + 0.4, "Kuzu graph\n+ patterns", ha="center", va="center",
+    _rounded(ax, (KUZU_X, cy + 0.28), BOX_W, BOX_H, "#E6F4F1")
+    ax.text(KUZU_X, cy + 0.28, "Kuzu graph\n+ patterns", ha="center", va="center",
             fontsize=8.5, color="#155A53")
 
-    _rounded(ax, (PROMPT_X, cy + 0.4), BOX_W, BOX_H, "#FDE8D4")
-    ax.text(PROMPT_X, cy + 0.4, "Prompt + adapter\non DeepSeek 8B",
+    _rounded(ax, (PROMPT_X, cy + 0.28), BOX_W, BOX_H, "#FDE8D4")
+    ax.text(PROMPT_X, cy + 0.28, "Prompt + adapter\non DeepSeek 8B",
             ha="center", va="center", fontsize=8.5, color="#7A3F0F")
 
     fit_cx = (IBM_X + PROMPT_X) / 2
     fit_w = (PROMPT_X - IBM_X) + BOX_W * 0.4
-    _rounded(ax, (fit_cx, cy - 0.6), fit_w, 0.6, colour, alpha=0.22,
+    _rounded(ax, (fit_cx, cy - 0.72), fit_w, 0.6, colour, alpha=0.22,
              edgecolor=colour)
-    ax.text(fit_cx, cy - 0.6, "Local fit / eval / MIA",
+    ax.text(fit_cx, cy - 0.72, "Local fit / eval / MIA",
             ha="center", va="center", fontsize=8.5, color=colour)
 
     half = BOX_W / 2
     for (src_x, dst_x) in [(IBM_X + half, KUZU_X - half),
                            (KUZU_X + half, PROMPT_X - half)]:
         ax.add_patch(FancyArrowPatch(
-            (src_x + 0.02, cy + 0.4), (dst_x - 0.02, cy + 0.4),
+            (src_x + 0.02, cy + 0.28), (dst_x - 0.02, cy + 0.28),
             arrowstyle="-|>", mutation_scale=9, color=SLATE, linewidth=1.0))
 
 
@@ -121,7 +121,7 @@ def main() -> None:
     # at top -> horizontal entry into server top-left.
     for cy in bank_cys:
         ax.add_patch(FancyArrowPatch(
-            (PROMPT_RIGHT, cy + 0.4), (GATHER_X, entry_top_y),
+            (PROMPT_RIGHT, cy + 0.28), (GATHER_X, entry_top_y),
             arrowstyle="-", mutation_scale=10, color=TEAL, linewidth=1.2,
             connectionstyle="arc3,rad=0",
         ))
@@ -137,7 +137,7 @@ def main() -> None:
     ))
     for cy in bank_cys:
         ax.add_patch(FancyArrowPatch(
-            (GATHER_X, entry_bot_y), (PROMPT_RIGHT, cy + 0.4),
+            (GATHER_X, entry_bot_y), (PROMPT_RIGHT, cy + 0.28),
             arrowstyle="-|>", mutation_scale=10, color=SLATE, linewidth=1.0,
             connectionstyle="arc3,rad=0",
         ))

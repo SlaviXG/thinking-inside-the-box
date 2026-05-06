@@ -47,7 +47,7 @@ def main() -> None:
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(OBJECTIVES, fontsize=9, color="#1F3A68")
     # Push labels outward to keep them clear of the outer ring.
-    ax.tick_params(axis="x", which="major", pad=18)
+    ax.tick_params(axis="x", which="major", pad=30)
 
     ax.set_yticks([0.25, 0.5, 0.75, 1.0])
     ax.set_yticklabels(["25%", "50%", "75%", "100%"], fontsize=7.5,
